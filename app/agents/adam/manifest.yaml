@@ -1,0 +1,83 @@
+name: Adam
+slug: adam
+version: "1.1.30"
+description: Foundational teammate for everyone.
+role: Starter Teammate
+category: Chat
+author: Tmates
+last_updated: 2025-11-08
+developer_website: https://tmates.app
+privacy_policy: https://tmates.app/privacy
+capabilities:
+  - onbording
+  - conversation
+  - guideance
+  - help
+branding:
+  avatar_url: ""
+  emoji: "🤖"
+  color: "#10B981"
+playbook:
+  optional_params:
+    - name: prompt
+      description: Natural language prompt that the agent should answer inline.
+    - name: context
+      description: Additional context or bullet points the agent should consider when generating a reply.
+outputs:
+  - type: status_update
+    description: Single sentence or short paragraph response summarizing the requested information.
+tools:
+  - name: run_prompt
+    display_name: Run Prompt
+    description: Submit a prompt through the OpenAI Agents SDK with session-aware memory persistence.
+    categories: [analysis, ideation, recap]
+    input_requirements:
+      required: [prompt]
+      optional: [context]
+    output_format:
+      type: text
+      fields: [reply]
+    task_matching:
+      keywords: [status, update, summary, brainstorm, question]
+      task_types: [analysis, communication, ideation]
+    confidence_weights:
+      keywords: 0.4
+      task_types: 0.3
+      patterns: 0.3
+  - name: create_pinboard_post
+    display_name: Pinboard Publish Update
+    description: Post a Markdown reminder or update to the workspace Pinboard on behalf of Adam.
+    categories: [publishing, status_update]
+    input_requirements:
+      required: [title, content_md]
+      optional: [excerpt, cover_url, attachments, sources, slug]
+    output_format:
+      type: object
+      fields: [id, slug, title, created_at]
+    task_matching:
+      keywords: [pinboard, publish, post, reminder, update]
+      task_types: [communication, status_update]
+
+env:
+  required:
+    - name: OPENAI_API_KEY
+      description: API key used for default OpenAI completions when not using Azure.
+  optional:
+    - name: ENV
+      description: Execution environment (`dev` by default). Set to `prod` to enable Postgres session memory.
+    - name: DATABASE_URL
+      description: Postgres connection string used for persistent conversation memory when `ENV=prod`.
+    - name: OPENAI_CLIENT
+      description: Set to `azure` to enable the Azure OpenAI Async client wiring.
+    - name: AZURE_OPENAI_ENDPOINT
+      description: Azure OpenAI endpoint URL required when `OPENAI_CLIENT=azure`.
+    - name: AZURE_OPENAI_API_KEY
+      description: API key for Azure OpenAI deployments.
+    - name: AZURE_OPENAI_DEPLOYMENT
+      description: Deployment name backing this agent (defaults to `gpt-5-mini`).
+    - name: AZURE_OPENAI_API_VERSION
+      description: Azure OpenAI API version (default `2025-03-01-preview`).
+    - name: ENABLE_LOGFIRE
+      description: Set to `1` to enable Logfire instrumentation for tracing.
+    - name: LOGFIRE_TOKEN
+      description: Logfire API token required when `ENABLE_LOGFIRE=1`.

@@ -1,0 +1,169 @@
+# Environment Variables and Secrets
+.env
+.env.local
+.env.development
+.env.dev
+.env.test
+.env.staging
+.env.production
+.env.prod
+agents/*/.env
+!.env.example
+!agents/*/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+files/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Logs and Runtime
+*.log
+logs/data/
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary Files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# Backup Files
+*.bak
+*.backup
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project Specific
+# Notion database exports
+exports/
+backups/
+*.notion
+*.json.bak
+app/db/dev.sqlite3
+
+# Local development overrides
+local.env
+dev.env
+test.env
+
+# Documentation builds (if using sphinx or similar)
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+
+# Unit test / coverage reports
+.coverage
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Translations
+*.mo
+*.pot
+
+# Flask/Django (if applicable in future)
+instance/
+.webassets-cache
+
+# Scrapy (if applicable in future)
+.scrapy
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Celery (if applicable in future)
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# End of https://www.toptal.com/developers/gitignore/api/python,macos,linux,windows,visualstudiocode

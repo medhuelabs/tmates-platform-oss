@@ -1,0 +1,115 @@
+name: Nolan
+slug: nolan
+version: "1.1.46"
+role: Filmmaker
+description: Generates short-form videos with OpenAI Sora from natural language prompts.
+category: Video
+author: Tmates
+last_updated: 2025-11-08
+developer_website: https://tmates.app
+privacy_policy: https://tmates.app/privacy
+capabilities:
+  - Video Generation
+  - Motion Design
+  - Cinematic Storytelling
+  - Creative Direction
+branding:
+  avatar_url: ""
+  emoji: "🎬"
+  color: "#7C3AED"
+playbook:
+  optional_params:
+    - name: prompt
+      description: Natural language prompt that the agent should answer inline.
+    - name: model
+      description: Video model identifier (`sora-2`, `sora-2-pro`, etc.).
+    - name: size
+      description: Output resolution in WIDTHxHEIGHT (e.g., `1280x720`).
+    - name: seconds
+      description: Length of the generated clip in seconds.
+outputs:
+tools:
+  - name: generate_video
+    display_name: Generate Video
+    description: Generate videos using OpenAI Sora from text prompts with optional image guidance.
+    categories: [media, content_generation, video, creative_direction]
+    input_requirements:
+      required: [prompt]
+      optional: [model, size, seconds]
+    output_format:
+      type: file_download
+      fields: [video_url, download_path, duration, resolution, format]
+    task_matching:
+      keywords: [video, animation, render, cinematic, clip, motion, footage]
+      content_patterns:
+        ["video", "render", "generate.*video", "animation", "footage"]
+      task_types:
+        [media_generation, content_creation, video_production, storytelling]
+    confidence_weights:
+      keywords: 0.5
+      patterns: 0.4
+      task_types: 0.3
+  - name: remix_video
+    display_name: Remix Video
+    description: Apply targeted adjustments to a previously generated Nolan video.
+    categories: [media, content_generation, video, creative_direction]
+    input_requirements:
+      required: [prompt]
+      optional: [source_video_id]
+    output_format:
+      type: file_download
+      fields: [video_url, download_path, duration, resolution, format]
+    task_matching:
+      keywords: [remix, tweak, revise, adjust, iteration]
+      content_patterns: ["remix", "iterate", "adjust.*video"]
+      task_types:
+        [media_generation, content_creation, video_production, storytelling]
+    confidence_weights:
+      keywords: 0.5
+      patterns: 0.3
+      task_types: 0.2
+  - name: create_pinboard_post
+    display_name: Pinboard Publish Update
+    description: Publish a Markdown update to the workspace Pinboard on behalf of Nolan.
+    categories: [publishing, status_update]
+    input_requirements:
+      required: [title, content_md]
+      optional: [excerpt, cover_url, attachments, sources, slug]
+    output_format:
+      type: object
+      fields: [id, slug, title, created_at]
+    task_matching:
+      keywords: [pinboard, publish, post, production, update]
+      task_types: [communication, status_update]
+
+env:
+  required:
+    - name: OPENAI_API_KEY
+      description: API key used for OpenAI Sora video generation.
+  optional:
+    - name: NOLAN_OPENAI_CLIENT
+      description: Set to `azure` to force Nolan to use Azure OpenAI; defaults to the shared `OPENAI_CLIENT` value when unset.
+    - name: NOLAN_OPENAI_API_KEY
+      description: Override the standard `OPENAI_API_KEY` just for Nolan when using the public OpenAI endpoint.
+    - name: NOLAN_OPENAI_BASE_URL
+      description: Custom OpenAI base URL for Nolan-specific routing (advanced usage).
+    - name: NOLAN_AZURE_OPENAI_ENDPOINT
+      description: Azure OpenAI endpoint dedicated to Nolan; falls back to `AZURE_OPENAI_ENDPOINT` when unset.
+    - name: NOLAN_AZURE_OPENAI_API_KEY
+      description: Azure OpenAI API key used when Nolan is configured for Azure; falls back to `AZURE_OPENAI_API_KEY`.
+    - name: NOLAN_AZURE_OPENAI_DEPLOYMENT
+      description: Azure OpenAI deployment name backing Sora video requests.
+    - name: NOLAN_AZURE_OPENAI_API_VERSION
+      description: Azure OpenAI API version for Nolan (defaults to `2025-03-01-preview`).
+    - name: NOLAN_DEFAULT_MODEL
+      description: Default Sora model to request when the user does not provide one (defaults to `sora-2`).
+    - name: OPENAI_CLIENT
+      description: Shared fallback toggle; set to `azure` to reuse common Azure credentials when agent-specific values are absent.
+    - name: AZURE_OPENAI_ENDPOINT
+      description: Shared Azure OpenAI endpoint used as fallback when `NOLAN_AZURE_OPENAI_ENDPOINT` is not provided.
+    - name: AZURE_OPENAI_API_KEY
+      description: Shared Azure OpenAI API key used when a Nolan-specific key is not supplied.
+    - name: AZURE_OPENAI_DEPLOYMENT
+      description: Shared Azure OpenAI deployment backing multiple agents; used if no Nolan-specific deployment is configured.
+    - name: AZURE_OPENAI_API_VERSION
+      description: Shared Azure OpenAI API version fallback if the Nolan-specific variant is unset.
