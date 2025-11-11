@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-DOMAIN="api.tmates.app"
-EMAIL="admin@medhuelabs.com"  # Replace with your email
+DOMAIN="${TMATES_SSL_DOMAIN:-api.example.com}"
+EMAIL="${TMATES_SSL_EMAIL:-admin@example.com}"  # Override via TMATES_SSL_EMAIL
 
 echo "🔐 Setting up SSL certificate for $DOMAIN"
 
@@ -28,7 +28,7 @@ docker run --rm \
 echo "✅ SSL certificate obtained successfully!"
 
 # Step 3: Switch to full SSL nginx configuration
-echo "� Switching to SSL nginx configuration..."
+echo "🛡 Switching to SSL nginx configuration..."
 cp nginx.conf nginx-active.conf
 docker compose -f docker-compose.prod.yml restart nginx
 

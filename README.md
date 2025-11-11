@@ -239,7 +239,7 @@ Use `python run.py agent <key> --message "Hello"` for quick CLI-based agent chec
   - Redis (broker/result backend)
   - Supabase/Postgres (managed service)
   - Optional S3-compatible storage for large files
-- See `scripts/setup-ssl.sh` and `scripts/renew-ssl.sh` for TLS automation examples.
+- See `scripts/setup-ssl.sh` and `scripts/renew-ssl.sh` for TLS automation examples (set `TMATES_SSL_DOMAIN` / `TMATES_SSL_EMAIL` or edit the files before running them).
 
 ## 14. Security
 
@@ -264,8 +264,12 @@ No `CONTRIBUTING.md` yet—open an issue if you need guidance or want to help de
 
 ## 16. License
 
-MIT License  
-Copyright (c) 2025 MedHue Labs
+tmates-platform-oss is released under the **Tmates Fair Use License (TFUL)**, a
+source-available license inspired by the n8n Fair Code model. You are free to read, run, and
+modify the code for personal projects or within your organization, but providing it as a
+hosted/managed service or redistributing it commercially requires a commercial agreement
+with MedHue Labs LLC. See [`LICENSE.md`](./LICENSE.md) for the full terms or email
+hello@tmates.app to discuss commercial licensing.
 
 ## 17. Contact & Support
 

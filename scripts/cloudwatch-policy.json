@@ -10,8 +10,8 @@
                 "logs:PutLogEvents"
             ],
             "Resource": [
-                "arn:aws:logs:us-east-2:464535293130:log-group:tmates-*",
-                "arn:aws:logs:us-east-2:464535293130:log-group:tmates-*:*"
+                "arn:aws:logs:us-east-2:123456789012:log-group:tmates-*",
+                "arn:aws:logs:us-east-2:123456789012:log-group:tmates-*:*"
             ]
         },
         {
