@@ -10,7 +10,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from logs import log
+from app.logger import log
 from app.auth import UserContext
 from app.core import (
     apply_user_context_to_env as _apply_user_context_to_env,

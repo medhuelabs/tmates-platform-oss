@@ -7,7 +7,7 @@ import sys
 from typing import Dict, Optional, Type
 
 from app.config import CONFIG
-from logs import log
+from app.logger import log
 
 from .base import AgentBase
 from .bundle_manager import BUNDLE_MANAGER, BundleResolutionError, ResolvedBundle

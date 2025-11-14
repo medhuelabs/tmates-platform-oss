@@ -28,3 +28,6 @@ logfire[fastapi]
 stripe
 email-validator
 greenlet
+pytest
+pytest-asyncio
+pytest-mock

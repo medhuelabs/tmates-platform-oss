@@ -24,7 +24,7 @@ from app.billing import BillingManager
 from app.config import load_envs
 from app.db import get_database_client
 from app.registry.agents.loader import create_agent
-from logs import log
+from app.logger import log
 
 logger = logging.getLogger(__name__)
 

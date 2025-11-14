@@ -13,7 +13,7 @@ import json
 import importlib
 from typing import Any, Dict, Optional, Tuple
 from .client import get_database_client
-from logs import log
+from app.logger import log
 
 MOBILE_SETTINGS_KEY = "mobile_preferences"
 

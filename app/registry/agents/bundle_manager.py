@@ -18,7 +18,7 @@ from supabase import create_client
 
 from app.config import CONFIG
 from app.db.client import get_database_client
-from logs import log
+from app.logger import log
 
 
 class BundleResolutionError(RuntimeError):

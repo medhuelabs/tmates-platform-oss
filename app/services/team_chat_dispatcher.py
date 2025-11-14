@@ -29,13 +29,7 @@ from openai.types.shared import Reasoning
 
 from app.registry.agents.models import AgentDefinition
 from app.registry.agents.store import AgentStore
-
-try:  # pragma: no cover - typed import for local runs where logging is configured
-    from logs import log
-except Exception:  # noqa: BLE001
-
-    def log(message: str) -> None:  # type: ignore[override]
-        print(message)
+from app.logger import log
 
 
 DECLINE_TOKEN = "DECLINE"

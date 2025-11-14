@@ -15,15 +15,7 @@ import re
 from dataclasses import dataclass
 
 from ...config import INSTALLED_AGENTS
-# Import log locally to avoid circular imports
-
-def _log(*args):
-    """Local log wrapper to avoid circular imports."""
-    try:
-        from logs import log
-        log(*args)
-    except ImportError:
-        print(*args)  # Fallback to print if logging not available
+from ...logger import log as _log
 
 # Define PROJECT_ROOT here since it's not in config.py
 PROJECT_ROOT = Path(__file__).resolve().parents[3]

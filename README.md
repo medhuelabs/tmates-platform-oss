@@ -213,18 +213,20 @@ Use `python run.py agent <key> --message "Hello"` for quick CLI-based agent chec
 
 ## 11. Testing & Code Quality
 
-- Test suite is being refactored; existing coverage lives under `app/tests/` and agent-specific directories.
-- Current commands:
+- Install dev dependencies (pytest + plugins) with `pip install -r requirements.txt`.
+- Coverage lives under `app/tests/unit`, `app/tests/integration`, and the agent-specific folders at `app/agents/<agent>/tests/`.
+- Run the test suite locally with:
   ```bash
   pytest
   flake8
   ```
-- Expect changes as the test harness is modernized; update this section once the new tooling (e.g., `ruff`, `mypy`, `pre-commit`) is finalized.
+- Tooling is still expanding (ruff, mypy, pre-commit), so update this section when additional linters become mandatory.
 
 ## 12. Logging, Monitoring & Tracing
 
 - Container logs are accessible via `docker logs <service>` during development.
 - Production logging routes through your chosen sink (e.g., CloudWatch); configure Docker logging drivers or sidecars accordingly.
+- Application code should emit messages through `app.logger.log`, which wraps the standard library logging stack and keeps agent imports consistent.
 - Agent-level tracing integrates with both Logfire (`ENABLE_LOGFIRE=1`, `LOGFIRE_TOKEN`) and OpenAI tracing exports.
 - Adjust verbosity with `.env` flags such as `LOG_LEVEL`, `VERBOSE`, and `SUPPRESS_SYSTEM_LOGS`.
 - Celery workers propagate correlation IDs through task metadata for easier tracing.
