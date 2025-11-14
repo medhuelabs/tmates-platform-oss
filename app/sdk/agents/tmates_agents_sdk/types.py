@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 
 class RunPromptCallable(Protocol):
@@ -13,6 +13,7 @@ class RunPromptCallable(Protocol):
         session_id: Optional[str],
         *,
         context: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Execute the agent brain asynchronously."""
 

@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import logfire
-from agents import Agent, ModelSettings, Runner, set_default_openai_client, set_tracing_export_api_key
+from agents import (
+    Agent,
+    ModelSettings,
+    RunConfig,
+    Runner,
+    set_default_openai_client,
+    set_tracing_export_api_key,
+)
 from agents.extensions.memory import SQLAlchemySession
 from openai import AsyncAzureOpenAI
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -98,11 +105,38 @@ class TmatesAgentsSDK:
         session_id: Optional[str] = None,
         *,
         context: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Invoke the shared agent asynchronously with memory support."""
 
         session = self._get_session(user_id, session_id)
-        response = await Runner.run(self.agent, prompt, session=session, context=context)
+        agent_input: str | list[Dict[str, Any]]
+        attachment_items: List[Dict[str, Any]] = []
+        run_config: RunConfig | None = None
+        if attachments:
+            for item in attachments:
+                if isinstance(item, dict) and item.get("type") == "input_image" and item.get("image_url"):
+                    attachment_items.append(dict(item))
+
+        if attachment_items:
+            content_parts: List[Dict[str, Any]] = []
+            if isinstance(prompt, str) and prompt.strip():
+                content_parts.append({"type": "input_text", "text": prompt})
+            content_parts.extend(attachment_items)
+            agent_input = [{"role": "user", "content": content_parts}]
+            run_config = RunConfig(
+                session_input_callback=lambda _previous, new_input: new_input,
+            )
+        else:
+            agent_input = prompt
+
+        response = await Runner.run(
+            self.agent,
+            agent_input,
+            session=session,
+            context=context,
+            run_config=run_config,
+        )
         return response.final_output
 
 

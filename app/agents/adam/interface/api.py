@@ -16,4 +16,5 @@ def process_api_request(request: Dict[str, Any], user_context: Optional[UserCont
         request=request,
         user_context=user_context,
         run_prompt=run_prompt,
+        vision_enabled=True,
     )

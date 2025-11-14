@@ -37,8 +37,8 @@ def test_run_agent_api_request_success(monkeypatch: pytest.MonkeyPatch, user_con
         def update_session_activity(self, session_id: str) -> None:
             recorded["updated_session"] = session_id
 
-    async def fake_run_prompt(message, user_id, session_id, context=None):
-        recorded["run_prompt_args"] = (message, user_id, session_id, context)
+    async def fake_run_prompt(message, user_id, session_id, context=None, attachments=None):
+        recorded["run_prompt_args"] = (message, user_id, session_id, context, attachments)
         return "Thanks!"
 
     def build_context(request, user_id, session_id):
@@ -75,7 +75,51 @@ def test_run_agent_api_request_success(monkeypatch: pytest.MonkeyPatch, user_con
     assert recorded["run_prompt_args"][1] == user_context.user_id
     assert recorded["run_prompt_args"][2] == "provided-session"
     assert recorded["run_prompt_args"][3] == {"user_id": user_context.user_id, "session_id": "provided-session"}
+    assert recorded["run_prompt_args"][4] is None
     assert recorded["context_inputs"][1] == user_context.user_id
+
+
+def test_run_agent_api_request_with_vision(monkeypatch: pytest.MonkeyPatch, user_context: UserContext) -> None:
+    recorded: dict[str, object] = {}
+
+    class DummySessionManager:
+        def get_or_create_session(self, **_):
+            return "session-vision"
+
+        def update_session_activity(self, session_id: str) -> None:  # pragma: no cover - unused
+            recorded["updated_session"] = session_id
+
+    async def fake_run_prompt(message, user_id, session_id, context=None, attachments=None):
+        recorded["run_prompt_args"] = (message, user_id, session_id, context, attachments)
+        return "img"
+
+    def fake_prepare(inputs, ctx):
+        recorded["vision_source"] = inputs
+        recorded["vision_ctx"] = ctx.user_id
+        return [{"type": "input_image", "image_url": "data:image/png;base64,AAA="}]
+
+    monkeypatch.setattr(sdk_api, "session_manager", DummySessionManager())
+    monkeypatch.setattr(sdk_api, "_prepare_vision_inputs", fake_prepare)
+
+    payload = {
+        "message": "Describe",
+        "thread_id": "thread-vision",
+        "attachments": [{"relative_path": "foo.png", "mime_type": "image/png"}],
+    }
+
+    response = sdk_api.run_agent_api_request(
+        agent_key="adam",
+        author_name="Adam",
+        request=payload,
+        user_context=user_context,
+        run_prompt=fake_run_prompt,
+        vision_enabled=True,
+    )
+
+    assert response["success"] is True
+    assert recorded["vision_source"] == payload["attachments"]
+    assert recorded["vision_ctx"] == user_context.user_id
+    assert recorded["run_prompt_args"][4] == [{"type": "input_image", "image_url": "data:image/png;base64,AAA="}]
 
 
 def test_run_agent_api_request_handles_run_prompt_error(monkeypatch: pytest.MonkeyPatch, user_context: UserContext) -> None:
