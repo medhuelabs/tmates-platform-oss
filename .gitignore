@@ -20,6 +20,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# Custom agents live outside this repo; only the template agent (adam) is tracked.
+app/agents/*
+!app/agents/__init__.py
+!app/agents/adam/
+!app/agents/adam/**
+app/agents/adam/**/__pycache__/
 # File uploads (tracked placeholder only)
 files/*
 !files/.gitkeep

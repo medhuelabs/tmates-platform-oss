@@ -13,7 +13,7 @@ def _user_context() -> UserContext:
         user_id="user-42",
         display_name="Tester",
         email="tester@example.com",
-        enabled_agents=["adam", "nolan"],
+        enabled_agents=["adam"],
         agent_configs={},
         timezone="UTC",
     )

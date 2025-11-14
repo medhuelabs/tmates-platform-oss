@@ -5,13 +5,13 @@ versions aligned.
 
 Usage examples:
 
-    # Copy Nolan from tmates-platform into tmates-agents and bump the version
-    python scripts/sync_agent.py nolan --version 1.1.13
+    # Copy a custom agent (e.g., 'researcher') into tmates-agents and bump the version
+    python scripts/sync_agent.py researcher --version 0.1.0
 
     # Sync and immediately publish the updated bundle to Supabase
-    python scripts/sync_agent.py nolan --version 1.1.13 --publish
+    python scripts/sync_agent.py researcher --version 0.1.0 --publish
 
-    # Sync every agent and bump the patch version automatically
+    # Sync every agent from this working tree and bump the patch version automatically
     python scripts/sync_agent.py --all --bump patch
 """
 

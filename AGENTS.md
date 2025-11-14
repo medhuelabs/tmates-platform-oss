@@ -2,7 +2,9 @@
 
 This repository currently ships a single production-ready agent (`adam`) that
 follows the modern October 2025 template. Use this document as a quick reference
-when auditing or building additional agents.
+when auditing or building additional agents. Custom agent folders can live under
+`app/agents/<key>/` locally; `.gitignore` keeps them out of commits so you can
+experiment safely.
 
 ## Repository Structure (Current)
 

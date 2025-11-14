@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 import inspect
+import os
+from types import SimpleNamespace
+
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///tmp/tmates_test.db")
+
+import app.sdk.agents.tmates_agents_sdk.runtime as runtime_module
+
+runtime_module.create_async_engine = lambda url, **_: SimpleNamespace()
 
 from agents import Agent
 

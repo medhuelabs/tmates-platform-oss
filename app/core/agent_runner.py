@@ -190,7 +190,7 @@ async def process_agents_for_message(
             },
         )
         logger.debug(
-            "[Nolan] process_agents_for_message forwarding %s attachment(s): %s",
+            "process_agents_for_message forwarding %s attachment(s): %s",
             len(normalised_attachments),
             attachment_names,
         )
@@ -293,7 +293,7 @@ async def process_agents_for_message(
                 ]
 
             if thread_kind == "group" and len(agent_keys) > 1 and not cancel_target:
-                await _send_system_message("Specify which agent to stop (e.g., 'stop leo').")
+                await _send_system_message("Specify which agent to stop (e.g., 'stop adam').")
                 return {"messages": messages, "thread_id": thread_id, "cancelled": False}
 
             for candidate in candidate_agents:

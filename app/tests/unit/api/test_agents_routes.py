@@ -79,8 +79,8 @@ def test_get_agent_store_uses_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     db.set_catalog(
         [
             {
-                "key": "dana",
-                "name": "Dana",
+                "key": "custom-analyst",
+                "name": "Custom Analyst",
                 "description": "Analyst",
                 "icon": "🧠",
                 "category": "ops",
@@ -95,7 +95,7 @@ def test_get_agent_store_uses_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     result = agents_routes.get_agent_store(user_id="user-1")
 
     assert result["source"] == "catalog"
-    assert result["available_agents"][0]["key"] == "dana"
+    assert result["available_agents"][0]["key"] == "custom-analyst"
     assert result["available_agents"][0]["hired"] is False
     assert result["available_agents"][0]["metadata"]["audience"] == "beta"
 

@@ -58,7 +58,7 @@ class SupabaseStorageService:
         return not result.error
 
 
-# Usage in Leonardo tools:
+# Usage in image-generation tools:
 def save_image_to_cloud(image_path: Path, user_id: str) -> str:
     """Save generated image to cloud storage instead of local filesystem."""
     if os.getenv("USE_CLOUD_STORAGE", "false").lower() == "true":

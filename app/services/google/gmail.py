@@ -251,7 +251,7 @@ def _extract_body(payload: Optional[Mapping[str, Any]]) -> Tuple[Optional[str], 
 class GmailService:
     """High-level Gmail helper that manages OAuth and API interactions."""
 
-    agent_key: str = "dana"
+    agent_key: str = "adam"
 
     def __init__(self, config: Optional[GmailConfig] = None) -> None:
         self._config = config

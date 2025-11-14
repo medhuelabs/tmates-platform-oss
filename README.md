@@ -95,7 +95,7 @@ Tmates is a platform that lets you create and collaborate with your own team of 
 ```bash
 tmates-platform/
   app/
-    agents/            # Agent implementations, prompts, manifests (see AGENTS.md)
+    agents/            # Template agent (adam); add custom agents locally (see AGENTS.md)
     api/               # FastAPI app, routers, dependencies, schemas
     auth/              # Supabase auth wiring and user context helpers
     core/              # Agent runner, dynamic agent service, thread manager
@@ -122,6 +122,13 @@ tmates-platform/
 - `app/services`: External integrations reused across agents.
 - `app/worker`: Celery worker configuration and tasks.
 - `app/db`: Supabase database client, SQL definitions, and settings utilities.
+
+### Template Agent
+
+Only the `adam` agent ships with this repository and serves as the canonical template.
+When building your own teammates, copy that structure into `app/agents/<your-key>/`
+locally. The `.gitignore` rules keep custom agents out of version control so you can
+prototype without exposing proprietary logic.
 
 ## 6. Getting Started
 
