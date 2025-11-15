@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from app.db import get_database_client
 from app.core.agent_runner import resolve_user_context, apply_user_context_to_env
 from app.api.routes.websocket import notify_chat_status
+from app.api.routes import chats as chats_routes
 from app.api.schemas import ChatMessageAttachment
 
 router = APIRouter()
@@ -161,25 +162,14 @@ async def read_chat_history(payload: ChatHistoryRequest):
     for record in records or []:
         payload_block = record.get("payload") or {}
         attachments_list: List[Dict[str, Any]] = []
-        attachments_raw = payload_block.get("attachments") or []
+        attachments_raw = payload_block.get("attachments") or record.get("attachments") or []
         if isinstance(attachments_raw, list):
             for entry in attachments_raw:
                 if not isinstance(entry, dict):
                     continue
-                normalized_entry = dict(entry)
-                uri = (
-                    normalized_entry.get("uri")
-                    or normalized_entry.get("url")
-                    or normalized_entry.get("download_url")
-                )
-                if not uri:
-                    continue
-                normalized_entry["uri"] = str(uri)
-                try:
-                    attachment_model = ChatMessageAttachment.model_validate(normalized_entry)
-                except ValidationError:
-                    continue
-                attachments_list.append(attachment_model.model_dump(exclude_none=True))
+                attachment = chats_routes._convert_attachment(entry)
+                if attachment:
+                    attachments_list.append(attachment.model_dump(exclude_none=True))
 
         message_entry = {
             "id": str(record.get("id")),
