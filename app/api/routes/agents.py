@@ -376,7 +376,7 @@ def manage_organization_agent(
                         kind = "agent"
 
                     updates = {
-                        "title": agent.name,
+                        "title": agent_name,
                         "metadata": metadata,
                         "agent_keys": [agent_key],
                         "kind": kind,
