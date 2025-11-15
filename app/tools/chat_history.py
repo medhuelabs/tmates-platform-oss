@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 import requests
 from agents import FunctionTool, RunContextWrapper, function_tool
@@ -83,6 +83,38 @@ def build_read_chat_history_tool(*, agent_key: str, max_limit: int = 20) -> Func
 
     api_url = build_api_url("v1", "internal", "chat-history")
 
+    def _cache_history_attachments(ctx: RunContextWrapper[Any], messages: List[Dict[str, Any]]) -> None:
+        context_mapping = getattr(ctx, "context", None)
+        if not isinstance(context_mapping, dict):
+            return
+
+        bucket: List[Dict[str, Any]] = context_mapping.setdefault("history_attachments", [])
+        seen_keys = {
+            _attachment_identity(entry)
+            for entry in bucket
+            if isinstance(entry, dict)
+        }
+
+        for message in messages:
+            attachments = message.get("attachments") or []
+            if not isinstance(attachments, list):
+                continue
+            for attachment in attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                identity = _attachment_identity(attachment)
+                if identity in seen_keys:
+                    continue
+                seen_keys.add(identity)
+                bucket.append(dict(attachment))
+
+    def _attachment_identity(entry: Dict[str, Any]) -> str:
+        for key in ("relative_path", "download_url", "uri", "name", "filename"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+        return str(id(entry))
+
     @function_tool
     async def read_chat_history_tool(
         ctx: RunContextWrapper[Any],
@@ -107,7 +139,11 @@ def build_read_chat_history_tool(*, agent_key: str, max_limit: int = 20) -> Func
             response.raise_for_status()
             return response.json()
 
-        return await asyncio.to_thread(_request)
+        response = await asyncio.to_thread(_request)
+        messages = response.get("messages") if isinstance(response, dict) else None
+        if isinstance(messages, list):
+            _cache_history_attachments(ctx, messages)
+        return response
 
     return read_chat_history_tool
 
