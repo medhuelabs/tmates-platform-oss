@@ -5,6 +5,9 @@ This replaces hard-coded agent definitions with dynamic discovery from the agent
 """
 
 from typing import Dict, List, Optional, Any
+
+from app.config import CONFIG
+from app.db import get_database_client
 from app.registry.agents.repository import AgentRepository
 
 
@@ -19,14 +22,39 @@ class DynamicAgentService:
     
     def __init__(self):
         self.agent_repo = AgentRepository()
-        # Remove database dependency to avoid circular imports
-    
+
+    def _load_catalog_entries(self) -> Dict[str, Dict[str, Any]]:
+        """Load the latest published catalog entries keyed by agent slug."""
+        if not getattr(CONFIG, "agent_catalog_enabled", False):
+            return {}
+
+        env = getattr(CONFIG, "agent_catalog_environment", "prod")
+        db = get_database_client()
+        if not db:
+            return {}
+
+        try:
+            entries = db.list_agent_catalog_agents(environment=env)
+        except Exception as exc:
+            print(f"DynamicAgentService: failed to load catalog entries: {exc}")
+            return {}
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for entry in entries:
+            key = (entry.get("key") or "").strip()
+            if key:
+                catalog[key] = entry
+        return catalog
+
     def get_all_available_agent_keys(self) -> List[str]:
         """
         Get all agent keys available at the PLATFORM LEVEL.
         These are agents installed on the backend via INSTALLED_AGENTS config.
         """
-        return list(self.agent_repo.keys())
+        catalog_entries = self._load_catalog_entries()
+        repo_keys = list(self.agent_repo.keys())
+        combined = set(repo_keys) | set(catalog_entries.keys())
+        return sorted(combined)
     
     def get_enabled_agents_for_user(self, user_context) -> List[str]:
         """
@@ -69,31 +97,69 @@ class DynamicAgentService:
     def get_agent_metadata(self, agent_key: str) -> Optional[Dict[str, Any]]:
         """Get metadata for a specific agent from registry."""
         definition = self.agent_repo.get(agent_key)
-        if not definition:
+        if definition:
+            manifest: Dict[str, Any] = definition.manifest or {}
+            manifest_branding = manifest.get("branding") if isinstance(manifest.get("branding"), dict) else None
+            manifest_ui = manifest.get("ui") if isinstance(manifest.get("ui"), dict) else None
+
+            metadata: Dict[str, Any] = {
+                'key': agent_key,
+                'name': definition.name or agent_key.title(),
+                'description': definition.description or f"{agent_key.title()} Agent",
+                'icon': definition.icon,
+                'docs': definition.docs,
+            }
+            
+            if manifest:
+                metadata['manifest'] = manifest
+            if manifest_branding:
+                metadata['branding'] = manifest_branding
+            if manifest_ui:
+                metadata['ui'] = manifest_ui
+                settings_block = manifest_ui.get("settings")
+                if isinstance(settings_block, dict):
+                    metadata['settings'] = settings_block
+            
+            return metadata
+
+        catalog_entries = self._load_catalog_entries()
+        entry = catalog_entries.get(agent_key)
+        if not entry:
             return None
-        
-        manifest: Dict[str, Any] = definition.manifest or {}
-        manifest_branding = manifest.get("branding") if isinstance(manifest.get("branding"), dict) else None
-        manifest_ui = manifest.get("ui") if isinstance(manifest.get("ui"), dict) else None
+
+        manifest_snapshot = entry.get("manifest")
+        manifest = manifest_snapshot if isinstance(manifest_snapshot, dict) else {}
+        branding = manifest.get("branding") if isinstance(manifest.get("branding"), dict) else None
+        ui_block = manifest.get("ui") if isinstance(manifest.get("ui"), dict) else None
 
         metadata: Dict[str, Any] = {
-            'key': agent_key,
-            'name': definition.name or agent_key.title(),
-            'description': definition.description or f"{agent_key.title()} Agent",
-            'icon': definition.icon,
-            'docs': definition.docs,
+            "key": agent_key,
+            "name": entry.get("name") or manifest.get("name") or agent_key.title(),
+            "description": entry.get("description") or manifest.get("description") or f"{agent_key.title()} Agent",
+            "icon": entry.get("icon") or (branding.get("avatar_url") if branding else None),
+            "docs": manifest.get("docs"),
         }
-        
+
         if manifest:
-            metadata['manifest'] = manifest
-        if manifest_branding:
-            metadata['branding'] = manifest_branding
-        if manifest_ui:
-            metadata['ui'] = manifest_ui
-            settings_block = manifest_ui.get("settings")
+            metadata["manifest"] = manifest
+        if branding:
+            metadata["branding"] = branding
+        if ui_block:
+            metadata["ui"] = ui_block
+            settings_block = ui_block.get("settings")
             if isinstance(settings_block, dict):
-                metadata['settings'] = settings_block
-        
+                metadata["settings"] = settings_block
+        developer_site = manifest.get("developer_website")
+        privacy_policy = manifest.get("privacy_policy")
+        if developer_site:
+            metadata["developer_website"] = developer_site
+        if privacy_policy:
+            metadata["privacy_policy"] = privacy_policy
+
+        version = entry.get("version")
+        if version:
+            metadata["version"] = version
+
         return metadata
     
     def get_all_agents_metadata(self, user_context=None) -> Dict[str, Dict[str, Any]]:
