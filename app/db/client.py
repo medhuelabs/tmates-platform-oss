@@ -759,6 +759,12 @@ class SupabaseDatabaseClient:
             data["agent_keys"] = [str(key) for key in agent_keys]
         else:
             data["agent_keys"] = []
+        active_session_id = data.get("active_session_id")
+        if active_session_id is not None:
+            try:
+                data["active_session_id"] = str(active_session_id)
+            except Exception:
+                pass
         return data
 
     @staticmethod
@@ -768,6 +774,12 @@ class SupabaseDatabaseClient:
         if not isinstance(payload, dict):
             payload = {}
         data["payload"] = payload
+        session_id = data.get("session_id")
+        if session_id is not None:
+            try:
+                data["session_id"] = str(session_id)
+            except Exception:
+                pass
         return data
 
     @staticmethod
@@ -980,6 +992,7 @@ class SupabaseDatabaseClient:
         payload: Optional[Dict[str, Any]],
         organization_id: Optional[str],
         user_id: Optional[str],
+        session_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Insert a message into a chat thread."""
         entry: Dict[str, Any] = {
@@ -993,6 +1006,8 @@ class SupabaseDatabaseClient:
             entry["organization_id"] = organization_id
         if user_id:
             entry["user_id"] = user_id
+        if session_id:
+            entry["session_id"] = session_id
         try:
             result = self.client.table("chat_messages").insert(entry).execute()
             if not result.data:

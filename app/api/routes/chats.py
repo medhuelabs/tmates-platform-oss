@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
@@ -12,6 +14,7 @@ from app.api.schemas import (
     ChatMessage,
     ChatMessageAttachment,
     ChatMessageCreate,
+    ChatSessionResetResponse,
     ChatThread,
     ChatThreadSummary,
 )
@@ -111,6 +114,13 @@ def _convert_message(record: Dict[str, object]) -> ChatMessage:
                 attachment = _convert_attachment(entry)
                 if attachment:
                     attachments.append(attachment)
+    session_id = record.get("session_id")
+    if session_id is not None:
+        session_id = str(session_id)
+    elif payload.get("session_id"):
+        candidate = payload.get("session_id")
+        if isinstance(candidate, str):
+            session_id = candidate
     return ChatMessage(
         id=str(record.get("id")),
         role=str(record.get("role") or "assistant"),
@@ -119,7 +129,7 @@ def _convert_message(record: Dict[str, object]) -> ChatMessage:
         created_at=record.get("created_at"),
         payload=payload,
         attachments=attachments,
-        session_id=payload.get("session_id")  # Include session_id from payload
+        session_id=session_id,
     )
 
 
@@ -130,6 +140,9 @@ def _convert_summary(
     agent_keys = _normalize_agent_keys(record.get("agent_keys"))
     last_activity = record.get("updated_at") or (last_message.created_at if last_message else None)
     last_preview = _build_preview(last_message.content if last_message else None)
+    active_session = record.get("active_session_id")
+    if active_session is not None:
+        active_session = str(active_session)
     return ChatThreadSummary(
         id=str(record.get("id")),
         title=str(record.get("title") or "Conversation"),
@@ -138,6 +151,7 @@ def _convert_summary(
         last_message_preview=last_preview,
         last_activity=last_activity,
         unread_count=0,
+        active_session_id=active_session,
     )
 
 
@@ -378,6 +392,7 @@ def get_chat_thread(
         last_message_preview=summary.last_message_preview,
         last_activity=summary.last_activity,
         unread_count=summary.unread_count,
+        active_session_id=summary.active_session_id,
         messages=messages,
     )
 
@@ -450,6 +465,90 @@ def clear_chat_history_endpoint(
         )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/chats/{thread_id}/session/reset",
+    response_model=ChatSessionResetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def reset_chat_session(
+    thread_id: str,
+    context=Depends(get_database_with_user),
+) -> ChatSessionResetResponse:
+    """Start a new agent session for the given chat thread."""
+
+    user_id, db = context
+    if not db:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database client is not configured",
+        )
+
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
+    if not thread:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat thread not found",
+        )
+
+    _ensure_thread_access(thread, user_id)
+
+    new_session_id = uuid.uuid4().hex
+
+    try:
+        db.update_chat_thread(thread_id, {"active_session_id": new_session_id})
+    except Exception as exc:
+        print(f"Failed to update active session for thread {thread_id}: {exc}")
+
+    timestamp = datetime.now(timezone.utc)
+    timestamp_iso = timestamp.isoformat()
+    friendly_time = timestamp.strftime("%b %d, %Y %H:%M UTC")
+    content = f"New session started · {friendly_time}"
+    payload = {
+        "event": "session_reset",
+        "session_id": new_session_id,
+        "started_at": timestamp_iso,
+    }
+
+    message_record = db.insert_chat_message(
+        thread_id=thread_id,
+        role="system",
+        content=content,
+        author=None,
+        payload=payload,
+        organization_id=thread.get("organization_id"),
+        user_id=user_id,
+        session_id=new_session_id,
+    )
+
+    if not message_record:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record session reset",
+        )
+
+    db.touch_chat_thread(thread_id)
+
+    message = _convert_message(message_record)
+    notification = {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
+        "author": message.author,
+        "created_at": message.created_at.isoformat() if hasattr(message.created_at, "isoformat") else message.created_at,
+        "attachments": [],
+        "payload": payload,
+    }
+    try:
+        await notify_new_message(user_id, thread_id, notification)
+    except Exception as exc:
+        print(f"Failed to broadcast session reset message: {exc}")
+
+    return ChatSessionResetResponse(session_id=new_session_id, message=message)
 
 
 @router.post(
@@ -565,15 +664,28 @@ async def send_chat_message_internal(
             turn_agent_keys = []
 
     # Session management: Determine session for agent conversation continuity
-    active_session_id = session_id
+    thread_active_session = thread.get("active_session_id")
+    if thread_active_session is not None:
+        try:
+            thread_active_session = str(thread_active_session)
+        except Exception:
+            thread_active_session = None
+
+    active_session_id = session_id or thread_active_session
     if turn_agent_keys:
         primary_agent_key = turn_agent_keys[0]
         active_session_id = session_manager.get_or_create_session(
             user_context=user_context,
             thread_id=thread_id,
             agent_key=primary_agent_key,
-            provided_session_id=session_id,
+            provided_session_id=active_session_id,
         )
+
+    if active_session_id and active_session_id != thread_active_session:
+        try:
+            db.update_chat_thread(thread_id, {"active_session_id": active_session_id})
+        except Exception as exc:
+            print(f"Failed to persist active_session_id for thread {thread_id}: {exc}")
 
     attachments_list: List[Dict[str, Any]] = []
     if attachments:
@@ -615,6 +727,7 @@ async def send_chat_message_internal(
         payload=message_payload,
         organization_id=organization.get("id"),
         user_id=user_id,
+        session_id=active_session_id,
     )
     if not message_record:
         raise Exception("Failed to record chat message")
@@ -632,6 +745,7 @@ async def send_chat_message_internal(
             "author": user_message_data.author,
             "created_at": user_message_data.created_at,
             "attachments": serialized_attachments,
+            "payload": message_payload,
         }
         if hasattr(notification_data["created_at"], "isoformat"):
             notification_data["created_at"] = notification_data["created_at"].isoformat()
@@ -723,6 +837,7 @@ async def send_chat_message_internal(
                         "author": agent_message.get("author", "Agent"),
                         "created_at": agent_message.get("timestamp") or agent_message.get("created_at"),
                         "attachments": serialized_agent_attachments,
+                        "payload": agent_message.get("payload") or {},
                     }
                     if hasattr(notification_data["created_at"], "isoformat"):
                         notification_data["created_at"] = notification_data["created_at"].isoformat()

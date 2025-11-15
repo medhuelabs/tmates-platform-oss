@@ -295,6 +295,11 @@ class ChatMessageCreate(BaseModel):
     session_id: Optional[str] = None  # Optional session to continue
 
 
+class ChatSessionResetResponse(BaseModel):
+    session_id: str
+    message: ChatMessage
+
+
 class FileEntry(BaseModel):
     name: str
     relative_path: str

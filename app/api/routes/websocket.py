@@ -159,6 +159,12 @@ async def _handle_send_message(
                 continue
             attachments.append(attachment_model.model_dump(exclude_none=True))
 
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str):
+        session_id = session_id.strip() or None
+    else:
+        session_id = None
+
     if not thread_id or not content:
         logger.warning(
             "Rejecting websocket payload for user=%s: missing thread_id/content",
@@ -177,6 +183,7 @@ async def _handle_send_message(
             thread_id,
             content.strip(),
             attachments=attachments,
+            session_id=session_id,
         )
     except Exception as exc:
         logger.exception(

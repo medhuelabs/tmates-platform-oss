@@ -228,6 +228,12 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
 
     # Save the agent response as a chat message
     message_payload: Dict[str, Any] = {}
+    session_id = None
+    if isinstance(payload.metadata, dict):
+        metadata_session = payload.metadata.get("session_id")
+        if isinstance(metadata_session, str) and metadata_session.strip():
+            session_id = metadata_session.strip()
+            message_payload["session_id"] = session_id
     if payload.metadata.get("parameters_text"):
         message_payload["parameters_text"] = payload.metadata.get("parameters_text")
     if attachments_list:
@@ -243,6 +249,7 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
         payload=message_payload,
         organization_id=organization.get("id") if organization else None,
         user_id=user_context.user_id,
+        session_id=session_id,
     )
     
     if message_record:
@@ -256,6 +263,7 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
             "author": payload.agent_key.title(),
             "created_at": message_record.get("created_at"),
             "attachments": attachments_list,
+            "payload": message_payload,
         }
         
         # Format datetime if needed
