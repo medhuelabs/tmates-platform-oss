@@ -144,7 +144,8 @@ async def read_chat_history(payload: ChatHistoryRequest):
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    limit = max(1, min(payload.limit, 50))
+    MAX_HISTORY_LIMIT = 2000
+    limit = max(1, min(payload.limit, MAX_HISTORY_LIMIT))
 
     try:
         records = db.list_chat_messages(
