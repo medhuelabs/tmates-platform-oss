@@ -166,8 +166,17 @@ async def read_chat_history(payload: ChatHistoryRequest):
             for entry in attachments_raw:
                 if not isinstance(entry, dict):
                     continue
+                normalized_entry = dict(entry)
+                uri = (
+                    normalized_entry.get("uri")
+                    or normalized_entry.get("url")
+                    or normalized_entry.get("download_url")
+                )
+                if not uri:
+                    continue
+                normalized_entry["uri"] = str(uri)
                 try:
-                    attachment_model = ChatMessageAttachment.model_validate(entry)
+                    attachment_model = ChatMessageAttachment.model_validate(normalized_entry)
                 except ValidationError:
                     continue
                 attachments_list.append(attachment_model.model_dump(exclude_none=True))
