@@ -3,10 +3,11 @@ from openai.types.shared import Reasoning
 
 from app.agents.adam.prompts.brain.loader import load_brain_prompt
 from app.sdk.agents.tmates_agents_sdk import TmatesAgentsSDK
-from app.tools import build_create_pinboard_post_tool
+from app.tools import build_create_pinboard_post_tool, build_read_chat_history_tool
 
 
 _PINBOARD_CREATE_POST = build_create_pinboard_post_tool(agent_key="adam")
+_READ_CHAT_HISTORY = build_read_chat_history_tool(agent_key="adam")
 
 
 def _build_runtime() -> TmatesAgentsSDK:
@@ -17,7 +18,7 @@ def _build_runtime() -> TmatesAgentsSDK:
         instructions_loader=load_brain_prompt,
         model="gpt-5-mini",
         model_settings=ModelSettings(reasoning=Reasoning(effort="low"), verbosity="low"),
-        tools=[_PINBOARD_CREATE_POST],
+        tools=[_READ_CHAT_HISTORY, _PINBOARD_CREATE_POST],
     )
 
 

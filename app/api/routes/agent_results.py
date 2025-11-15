@@ -93,6 +93,14 @@ class AgentStatusPayload(BaseModel):
     extra: Dict[str, Any] = {}
 
 
+class ChatHistoryRequest(BaseModel):
+    job_id: Optional[str] = None
+    agent_key: str
+    user_id: str
+    thread_id: str
+    limit: int = 10
+
+
 @router.post("/internal/agent-result", status_code=status.HTTP_200_OK)
 async def handle_agent_result(payload: AgentResultPayload):
     """
@@ -123,6 +131,67 @@ async def handle_agent_result(payload: AgentResultPayload):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process agent result: {str(exc)}"
         )
+
+
+@router.post("/internal/chat-history", status_code=status.HTTP_200_OK)
+async def read_chat_history(payload: ChatHistoryRequest):
+    db = get_database_client()
+
+    try:
+        user_context, _, _ = resolve_user_context(payload.user_id)
+        apply_user_context_to_env(user_context)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    limit = max(1, min(payload.limit, 50))
+
+    try:
+        records = db.list_chat_messages(
+            payload.thread_id,
+            limit=limit,
+            ascending=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load chat history: {exc}",
+        ) from exc
+
+    history: List[Dict[str, Any]] = []
+    for record in records or []:
+        payload_block = record.get("payload") or {}
+        attachments_list: List[Dict[str, Any]] = []
+        attachments_raw = payload_block.get("attachments") or []
+        if isinstance(attachments_raw, list):
+            for entry in attachments_raw:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    attachment_model = ChatMessageAttachment.model_validate(entry)
+                except ValidationError:
+                    continue
+                attachments_list.append(attachment_model.model_dump(exclude_none=True))
+
+        message_entry = {
+            "id": str(record.get("id")),
+            "role": str(record.get("role") or "assistant"),
+            "author": record.get("author"),
+            "content": record.get("content"),
+            "created_at": record.get("created_at"),
+            "attachments": attachments_list,
+        }
+        created_at = message_entry.get("created_at")
+        if hasattr(created_at, "isoformat"):
+            message_entry["created_at"] = created_at.isoformat()
+
+        history.append(message_entry)
+
+    history.reverse()
+
+    return {
+        "thread_id": payload.thread_id,
+        "messages": history,
+    }
 
 
 async def _handle_chat_result(db, payload: AgentResultPayload, user_context, organization):
