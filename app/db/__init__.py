@@ -8,12 +8,18 @@ This module provides database functionality including:
 - Database models and schema operations
 """
 
-from .client import DatabaseClient, get_database_client, initialize_database
+from .client import (
+    DatabaseClient,
+    TransientDatabaseError,
+    get_database_client,
+    initialize_database,
+)
 from .settings import get_system_defaults, load_user_agent_settings, save_user_agent_settings
 from .models import UserProfile, AgentSettings, RunRecord
 
 __all__ = [
     "DatabaseClient",
+    "TransientDatabaseError",
     "get_database_client", 
     "initialize_database",
     "get_system_defaults",

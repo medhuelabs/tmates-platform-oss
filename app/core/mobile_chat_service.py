@@ -6,7 +6,7 @@ and architectural conflicts of the web-oriented ChatManager system.
 """
 
 from typing import List, Dict, Any, Optional
-from app.db import get_database_client
+from app.db import TransientDatabaseError, get_database_client
 from app.auth import UserContext
 
 
@@ -104,7 +104,11 @@ class MobileChatService:
     
     def _fix_thread_agent_keys(self, thread_id: str, agent_keys: List[str]) -> bool:
         """Fix agent_keys for a thread."""
-        thread = self.db.get_chat_thread(thread_id)
+        try:
+            thread = self.db.get_chat_thread(thread_id)
+        except TransientDatabaseError as exc:
+            print(f"MobileChatService: transient error fetching thread {thread_id}: {exc}")
+            return False
         if not thread:
             return False
         

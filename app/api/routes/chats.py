@@ -16,12 +16,20 @@ from app.api.schemas import (
     ChatThreadSummary,
 )
 from app.core.agent_runner import resolve_user_context
+from app.db import TransientDatabaseError
 from app.services.team_chat_dispatcher import TeamDispatchResult, team_chat_dispatcher
 from .websocket import notify_new_message
 
 router = APIRouter()
 
 MAX_MESSAGE_PREVIEW = 160
+
+
+def _raise_transient_chat_error(exc: TransientDatabaseError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Chat data temporarily unavailable. Please try again.",
+    ) from exc
 
 
 def _normalize_agent_keys(raw_value) -> List[str]:
@@ -240,11 +248,14 @@ def list_chat_threads(
     
     summaries: List[ChatThreadSummary] = []
     for thread in filtered_threads:
-        last_records = db.list_chat_messages(
-            thread_id=thread.get("id"),
-            limit=1,
-            ascending=False,
-        )
+        try:
+            last_records = db.list_chat_messages(
+                thread_id=thread.get("id"),
+                limit=1,
+                ascending=False,
+            )
+        except TransientDatabaseError as exc:
+            _raise_transient_chat_error(exc)
         last_message = _convert_message(last_records[0]) if last_records else None
         summaries.append(_convert_summary(thread, last_message))
     return summaries
@@ -287,11 +298,14 @@ def create_chat_thread(
         thread_agent_keys = _normalize_agent_keys(thread.get("agent_keys", []))
         if len(thread_agent_keys) == 1 and thread_agent_keys[0] == agent_key:
             # Thread already exists, return it
-            last_records = db.list_chat_messages(
-                thread_id=thread.get("id"),
-                limit=1,
-                ascending=False,
-            )
+            try:
+                last_records = db.list_chat_messages(
+                    thread_id=thread.get("id"),
+                    limit=1,
+                    ascending=False,
+                )
+            except TransientDatabaseError as exc:
+                _raise_transient_chat_error(exc)
             last_message = _convert_message(last_records[0]) if last_records else None
             return _convert_summary(thread, last_message)
     
@@ -334,7 +348,10 @@ def get_chat_thread(
             detail="Database client is not configured",
         )
 
-    thread = db.get_chat_thread(thread_id)
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
     if not thread:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -342,11 +359,14 @@ def get_chat_thread(
         )
     _ensure_thread_access(thread, user_id)
 
-    messages_raw = db.list_chat_messages(
-        thread_id,
-        limit=limit,
-        ascending=True,
-    )
+    try:
+        messages_raw = db.list_chat_messages(
+            thread_id,
+            limit=limit,
+            ascending=True,
+        )
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
     messages = [_convert_message(record) for record in messages_raw]
     last_message = messages[-1] if messages else None
     summary = _convert_summary(thread, last_message)
@@ -376,7 +396,10 @@ def delete_chat_thread_endpoint(
             detail="Database client is not configured",
         )
 
-    thread = db.get_chat_thread(thread_id)
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
     if not thread:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -408,7 +431,10 @@ def clear_chat_history_endpoint(
             detail="Database client is not configured",
         )
 
-    thread = db.get_chat_thread(thread_id)
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
     if not thread:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -484,7 +510,10 @@ async def send_chat_message_internal(
     except LookupError as exc:
         raise Exception(f"User not found: {exc}")
 
-    thread = db.get_chat_thread(thread_id)
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
     if not thread:
         raise Exception("Chat thread not found")
         
@@ -494,7 +523,10 @@ async def send_chat_message_internal(
     thread_manager.ensure_agent_keys(thread_id, user_context)
     
     # Re-fetch thread after potential agent_keys fix
-    thread = db.get_chat_thread(thread_id)
+    try:
+        thread = db.get_chat_thread(thread_id)
+    except TransientDatabaseError as exc:
+        _raise_transient_chat_error(exc)
 
     # Determine eligible agents for this turn
     thread_agent_keys = _normalize_agent_keys(thread.get("agent_keys", []))

@@ -9,13 +9,23 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+import time
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
+
+import httpx
 
 from supabase import Client, create_client
 
 from ..auth import UserContext
 from ..config import CONFIG
 
+T = TypeVar("T")
+
+
+class TransientDatabaseError(RuntimeError):
+    """Raised when a transient Supabase error prevents fulfilling a request."""
+
+    pass
 
 def _dev_mode_enabled() -> bool:
     value = os.getenv("DEVELOPMENT_MODE", "").strip().lower()
@@ -807,16 +817,21 @@ class SupabaseDatabaseClient:
     def get_chat_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a chat thread by id."""
         try:
-            result = (
-                self.client.table("chat_threads")
-                .select("*")
-                .eq("id", thread_id)
-                .limit(1)
-                .execute()
-            )
-            if not result.data:
-                return None
-            return self._normalize_chat_thread_record(result.data[0])
+            def _query() -> Optional[Dict[str, Any]]:
+                result = (
+                    self.client.table("chat_threads")
+                    .select("*")
+                    .eq("id", thread_id)
+                    .limit(1)
+                    .execute()
+                )
+                if not result.data:
+                    return None
+                return self._normalize_chat_thread_record(result.data[0])
+
+            return self._execute_with_retry(_query, f"fetch chat thread {thread_id}")
+        except TransientDatabaseError:
+            raise
         except Exception as exc:
             print(f"Error fetching chat thread {thread_id}: {exc}")
             return None
@@ -934,16 +949,23 @@ class SupabaseDatabaseClient:
     ) -> List[Dict[str, Any]]:
         """Fetch messages for a thread."""
         try:
-            result = (
-                self.client.table("chat_messages")
-                .select("*")
-                .eq("thread_id", thread_id)
-                .order("created_at", desc=not ascending)
-                .limit(limit)
-                .execute()
+            def _query() -> List[Dict[str, Any]]:
+                result = (
+                    self.client.table("chat_messages")
+                    .select("*")
+                    .eq("thread_id", thread_id)
+                    .order("created_at", desc=not ascending)
+                    .limit(limit)
+                    .execute()
+                )
+                records = result.data or []
+                return [self._normalize_chat_message_record(row) for row in records]
+
+            return self._execute_with_retry(
+                _query, f"list chat messages for thread {thread_id}"
             )
-            records = result.data or []
-            return [self._normalize_chat_message_record(row) for row in records]
+        except TransientDatabaseError:
+            raise
         except Exception as exc:
             print(f"Error listing chat messages for thread {thread_id}: {exc}")
             return []
@@ -979,6 +1001,64 @@ class SupabaseDatabaseClient:
         except Exception as exc:
             print(f"Error inserting chat message for thread {thread_id}: {exc}")
             return None
+
+    @staticmethod
+    def _is_transient_supabase_error(exc: Exception) -> bool:
+        transient_markers = (
+            "Server disconnected",
+            "Connection reset",
+            "Connection aborted",
+            "Temporary failure",
+            "timeout",
+            "EOF occurred in violation of protocol",
+        )
+        message = str(exc)
+        if any(marker in message for marker in transient_markers):
+            return True
+        if isinstance(
+            exc,
+            (
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.ReadError,
+                httpx.NetworkError,
+                httpx.TransportError,
+            ),
+        ):
+            return True
+        return False
+
+    def _execute_with_retry(
+        self,
+        operation: Callable[[], T],
+        description: str,
+        *,
+        retries: int = 2,
+        initial_delay: float = 0.2,
+    ) -> T:
+        attempt = 0
+        delay = initial_delay
+        last_exc: Optional[Exception] = None
+
+        while attempt <= retries:
+            try:
+                return operation()
+            except Exception as exc:
+                if not self._is_transient_supabase_error(exc) or attempt == retries:
+                    raise TransientDatabaseError(
+                        f"Transient error while attempting to {description}"
+                    ) from exc
+                print(
+                    f"Transient Supabase error ({description}) attempt {attempt + 1}/{retries + 1}: {exc}"
+                )
+                last_exc = exc
+                time.sleep(delay)
+                delay *= 2
+                attempt += 1
+
+        raise TransientDatabaseError(
+            f"Failed to {description} after {retries + 1} attempts"
+        ) from last_exc
 
     def list_pinboard_posts(
         self,

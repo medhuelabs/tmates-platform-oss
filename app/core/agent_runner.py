@@ -22,7 +22,7 @@ from app.auth import (
 )
 from app.billing import BillingManager
 from app.config import load_envs
-from app.db import get_database_client
+from app.db import TransientDatabaseError, get_database_client
 from app.registry.agents.loader import create_agent
 from app.logger import log
 
@@ -277,7 +277,13 @@ async def process_agents_for_message(
             return True
         
         # Get thread to check if it's a group chat
-        thread = database_client.get_chat_thread(thread_id)
+        try:
+            thread = database_client.get_chat_thread(thread_id)
+        except TransientDatabaseError as exc:
+            logger.warning(
+                "Transient database error fetching thread %s: %s", thread_id, exc
+            )
+            thread = None
         thread_kind = thread.get("kind", "agent") if thread else "agent"
 
         cancel_requested, cancel_target = _parse_cancel_command(message_text)
