@@ -84,11 +84,19 @@ def build_read_chat_history_tool(*, agent_key: str, max_limit: int = 20) -> Func
     api_url = build_api_url("v1", "internal", "chat-history")
 
     def _cache_history_attachments(ctx: RunContextWrapper[Any], messages: List[Dict[str, Any]]) -> None:
+        bucket: List[Dict[str, Any]] = []
+
         context_mapping = getattr(ctx, "context", None)
-        if not isinstance(context_mapping, dict):
+        if isinstance(context_mapping, dict):
+            bucket = context_mapping.setdefault("history_attachments", [])
+
+        state_mapping = getattr(ctx, "state", None)
+        if isinstance(state_mapping, dict):
+            bucket = state_mapping.setdefault("history_attachments", bucket)
+
+        if not isinstance(bucket, list):
             return
 
-        bucket: List[Dict[str, Any]] = context_mapping.setdefault("history_attachments", [])
         seen_keys = {
             _attachment_identity(entry)
             for entry in bucket
@@ -105,8 +113,13 @@ def build_read_chat_history_tool(*, agent_key: str, max_limit: int = 20) -> Func
                 identity = _attachment_identity(attachment)
                 if identity in seen_keys:
                     continue
+                normalized = dict(attachment)
+                if not normalized.get("relative_path"):
+                    derived = _derive_relative_path(normalized)
+                    if derived:
+                        normalized["relative_path"] = derived
                 seen_keys.add(identity)
-                bucket.append(dict(attachment))
+                bucket.append(normalized)
 
     def _attachment_identity(entry: Dict[str, Any]) -> str:
         for key in ("relative_path", "download_url", "uri", "name", "filename"):
@@ -114,6 +127,22 @@ def build_read_chat_history_tool(*, agent_key: str, max_limit: int = 20) -> Func
             if isinstance(value, str) and value.strip():
                 return value.strip().lower()
         return str(id(entry))
+
+    def _derive_relative_path(entry: Dict[str, Any]) -> Optional[str]:
+        candidates = [
+            entry.get("relative_path"),
+            entry.get("uri"),
+            entry.get("download_url"),
+            entry.get("url"),
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            stripped = candidate.split("?", 1)[0]
+            for marker in ("/v1/files/download/", "/files/download/", "/api/v1/files/download/"):
+                if marker in stripped:
+                    return stripped.split(marker, 1)[1].lstrip("/")
+        return None
 
     @function_tool
     async def read_chat_history_tool(
