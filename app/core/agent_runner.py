@@ -30,6 +30,77 @@ logger = logging.getLogger(__name__)
 
 
 _CANCEL_KEYWORDS = ("stop", "cancel")
+_RECENT_ATTACHMENT_HISTORY_LIMIT = 40
+_MAX_ATTACHMENT_CONTEXT = 10
+
+
+def _summarize_text(text: str, limit: int = 140) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def _attachment_identity(attachment: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(attachment, dict):
+        return None
+    for key in ("relative_path", "download_url", "uri", "name", "filename", "file_name"):
+        value = attachment.get(key)
+        if isinstance(value, str) and value.strip():
+            return f"{key}:{value.strip()}"
+    return None
+
+
+def _collect_recent_attachments(
+    database_client,
+    thread_id: str,
+    *,
+    exclude_keys: Optional[set[str]] = None,
+    limit: int = _MAX_ATTACHMENT_CONTEXT,
+) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    try:
+        history = database_client.list_chat_messages(
+            thread_id,
+            limit=_RECENT_ATTACHMENT_HISTORY_LIMIT,
+            ascending=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive log
+        logger.warning("Failed to collect recent attachments for %s: %s", thread_id, exc)
+        return []
+
+    recent: List[Dict[str, Any]] = []
+    seen = set(exclude_keys or set())
+
+    for record in history or []:
+        payload = record.get("payload") or {}
+        attachments = payload.get("attachments") or []
+        if not isinstance(attachments, list):
+            continue
+
+        for entry in attachments:
+            if not isinstance(entry, dict):
+                continue
+
+            identifier = _attachment_identity(entry)
+            if identifier and identifier in seen:
+                continue
+            normalized = dict(entry)
+            normalized.setdefault("source_message_id", str(record.get("id")))
+            normalized.setdefault("source_created_at", record.get("created_at"))
+            normalized.setdefault(
+                "source_message_preview",
+                _summarize_text(str(record.get("content") or "")),
+            )
+            if identifier:
+                seen.add(identifier)
+            recent.append(normalized)
+            if len(recent) >= limit:
+                return recent
+
+    return recent
 
 
 def _parse_cancel_command(message: str) -> tuple[bool, Optional[str]]:
@@ -194,6 +265,22 @@ async def process_agents_for_message(
             len(normalised_attachments),
             attachment_names,
         )
+    attachment_identity_excludes = {
+        key
+        for key in (_attachment_identity(item) for item in normalised_attachments)
+        if key
+    }
+    recent_attachment_context = _collect_recent_attachments(
+        database_client,
+        thread_id,
+        exclude_keys=attachment_identity_excludes,
+        limit=max(0, _MAX_ATTACHMENT_CONTEXT - len(normalised_attachments)),
+    )
+    combined_attachment_context: List[Dict[str, Any]] = []
+    if normalised_attachments:
+        combined_attachment_context.extend(normalised_attachments)
+    if recent_attachment_context:
+        combined_attachment_context.extend(recent_attachment_context)
 
     try:
         user_context, organization, _ = resolve_user_context(user_id)
@@ -349,8 +436,10 @@ async def process_agents_for_message(
                     "agent_key": agent_key,
                     "author": author_label,
                 }
-                if normalised_attachments:
-                    job_metadata["attachments"] = normalised_attachments
+                if combined_attachment_context:
+                    job_metadata["attachments"] = combined_attachment_context[:_MAX_ATTACHMENT_CONTEXT]
+                if recent_attachment_context:
+                    job_metadata["reference_images"] = recent_attachment_context
                 payload = {
                     "cli_args": {
                         "message": message_text,
@@ -362,8 +451,8 @@ async def process_agents_for_message(
                     "session_id": session_id,
                     "metadata": job_metadata,
                 }
-                if normalised_attachments:
-                    payload["cli_args"]["attachments"] = normalised_attachments
+                if combined_attachment_context:
+                    payload["cli_args"]["attachments"] = combined_attachment_context[:_MAX_ATTACHMENT_CONTEXT]
 
                 job_record = database_client.create_agent_job(
                     user_context.user_id,
