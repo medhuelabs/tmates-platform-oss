@@ -11,7 +11,7 @@ from app.db import get_database_client
 from app.core.agent_runner import resolve_user_context, apply_user_context_to_env
 from app.api.routes.websocket import notify_chat_status
 from app.api.routes import chats as chats_routes
-from app.api.schemas import ChatMessageAttachment
+from app.api.schemas import ChatMessageAttachment, ChatMessage
 
 router = APIRouter()
 
@@ -160,30 +160,25 @@ async def read_chat_history(payload: ChatHistoryRequest):
 
     history: List[Dict[str, Any]] = []
     for record in records or []:
-        payload_block = record.get("payload") or {}
-        attachments_list: List[Dict[str, Any]] = []
-        attachments_raw = payload_block.get("attachments") or record.get("attachments") or []
-        if isinstance(attachments_raw, list):
-            for entry in attachments_raw:
-                if not isinstance(entry, dict):
-                    continue
-                attachment = chats_routes._convert_attachment(entry)
-                if attachment:
-                    attachments_list.append(attachment.model_dump(exclude_none=True))
+        message_model: ChatMessage = chats_routes._convert_message(record)
+        attachments_list = [
+            attachment.model_dump(exclude_none=True)
+            for attachment in message_model.attachments
+        ]
 
-        message_entry = {
-            "id": str(record.get("id")),
-            "role": str(record.get("role") or "assistant"),
-            "author": record.get("author"),
-            "content": record.get("content"),
-            "created_at": record.get("created_at"),
+        entry = {
+            "id": message_model.id,
+            "role": message_model.role,
+            "author": message_model.author,
+            "content": message_model.content,
+            "created_at": message_model.created_at,
             "attachments": attachments_list,
         }
-        created_at = message_entry.get("created_at")
+        created_at = entry.get("created_at")
         if hasattr(created_at, "isoformat"):
-            message_entry["created_at"] = created_at.isoformat()
+            entry["created_at"] = created_at.isoformat()
 
-        history.append(message_entry)
+        history.append(entry)
 
     history.reverse()
 
