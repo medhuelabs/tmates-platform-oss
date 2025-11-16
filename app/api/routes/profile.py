@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_database_with_user
-from app.api.schemas import UserProfile, UserProfileUpdateRequest
+from app.api.schemas import (
+    AccountDeletionResponse,
+    UserProfile,
+    UserProfileUpdateRequest,
+)
 from app.auth.manager import get_auth_manager
 
 router = APIRouter()
@@ -167,4 +171,41 @@ def update_profile(
         display_name=final_display,
         avatar_url=refreshed.get("avatar_url") if refreshed else None,
         role=user_role,
+    )
+
+
+@router.delete(
+    "/profile",
+    response_model=AccountDeletionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def delete_profile(context=Depends(get_database_with_user)) -> AccountDeletionResponse:
+    """Delete the authenticated user's account and associated data."""
+
+    user_id, db = context
+    if not db:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database client is not configured",
+        )
+
+    if not db.delete_user_account(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remove account data",
+        )
+
+    auth_manager = get_auth_manager()
+    if not auth_manager.delete_auth_user(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to remove authentication profile",
+        )
+
+    return AccountDeletionResponse(
+        status="deleted",
+        detail=(
+            "Your account deletion request has been processed. "
+            "It may take a few minutes for all sessions to sign out."
+        ),
     )

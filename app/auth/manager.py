@@ -265,6 +265,15 @@ class SupabaseAuthManager:
 
         return bool(response and response.status_code < 400)
 
+    def delete_auth_user(self, user_id: str) -> bool:
+        """Remove a Supabase auth user via the admin API."""
+
+        if not user_id:
+            return False
+
+        response = self._admin_request("DELETE", f"/admin/users/{user_id}")
+        return bool(response and response.status_code < 400)
+
 
 AuthManager = SupabaseAuthManager
 

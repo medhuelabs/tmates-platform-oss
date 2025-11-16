@@ -508,6 +508,159 @@ class SupabaseDatabaseClient:
             print(f"Error getting user organization: {e}")
             return None
 
+    def delete_user_account(self, auth_user_id: str) -> bool:
+        """Remove a user, their memberships, and reassociate dependent records."""
+
+        if not auth_user_id:
+            return False
+
+        try:
+            memberships = (
+                self.client.table("organization_members")
+                .select("organization_id")
+                .eq("user_id", auth_user_id)
+                .execute()
+            )
+            organization_ids = [
+                str(entry["organization_id"])
+                for entry in (memberships.data or [])
+                if entry.get("organization_id")
+            ]
+
+            for organization_id in organization_ids:
+                replacement_user_id = self._choose_organization_replacement(
+                    organization_id, auth_user_id
+                )
+
+                if replacement_user_id is None:
+                    (
+                        self.client.table("organizations")
+                        .delete()
+                        .eq("id", organization_id)
+                        .execute()
+                    )
+                    continue
+
+                self._reassign_organization_resources(
+                    organization_id,
+                    departing_user_id=auth_user_id,
+                    replacement_user_id=replacement_user_id,
+                )
+
+                (
+                    self.client.table("organization_members")
+                    .delete()
+                    .eq("organization_id", organization_id)
+                    .eq("user_id", auth_user_id)
+                    .execute()
+                )
+
+            (
+                self.client.table("agent_jobs")
+                .delete()
+                .eq("auth_user_id", auth_user_id)
+                .execute()
+            )
+
+            (
+                self.client.table("user_profiles")
+                .delete()
+                .eq("auth_user_id", auth_user_id)
+                .execute()
+            )
+
+            return True
+        except Exception as exc:
+            print(f"Error deleting account for {auth_user_id}: {exc}")
+            return False
+
+    def _choose_organization_replacement(
+        self, organization_id: str, departing_user_id: str
+    ) -> Optional[str]:
+        """Select a replacement member that can own resources after deletion."""
+
+        try:
+            result = (
+                self.client.table("organization_members")
+                .select("user_id, role, joined_at, is_active")
+                .eq("organization_id", organization_id)
+                .eq("is_active", True)
+                .execute()
+            )
+        except Exception as exc:
+            print(
+                f"Error fetching organization members for {organization_id}: {exc}"
+            )
+            return None
+
+        candidates: List[Dict[str, Any]] = []
+        for entry in result.data or []:
+            user_id = entry.get("user_id")
+            if not user_id:
+                continue
+            if str(user_id) == departing_user_id:
+                continue
+            candidates.append(
+                {
+                    "user_id": str(user_id),
+                    "role": (entry.get("role") or "").strip().lower(),
+                    "joined_at": entry.get("joined_at") or "",
+                }
+            )
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: (
+                0 if item["role"] == "owner" else 1,
+                item["joined_at"],
+            )
+        )
+        return candidates[0]["user_id"]
+
+    def _reassign_organization_resources(
+        self,
+        organization_id: str,
+        *,
+        departing_user_id: str,
+        replacement_user_id: str,
+    ) -> None:
+        """Update resources so that departing users no longer own required rows."""
+
+        (
+            self.client.table("organizations")
+            .update({"created_by": replacement_user_id})
+            .eq("id", organization_id)
+            .eq("created_by", departing_user_id)
+            .execute()
+        )
+
+        reassignment_targets = [
+            ("teams", "created_by"),
+            ("agents", "created_by"),
+            ("playbooks", "created_by"),
+            ("tasks", "created_by"),
+            ("runs", "created_by"),
+        ]
+
+        for table, column in reassignment_targets:
+            (
+                self.client.table(table)
+                .update({column: replacement_user_id})
+                .eq("organization_id", organization_id)
+                .eq(column, departing_user_id)
+                .execute()
+            )
+
+        (
+            self.client.table("tasks")
+            .update({"assigned_to": None})
+            .eq("organization_id", organization_id)
+            .eq("assigned_to", departing_user_id)
+            .execute()
+        )
+
     def get_billing_plan(self, plan_key: str) -> Optional[Dict[str, Any]]:
         try:
             result = (

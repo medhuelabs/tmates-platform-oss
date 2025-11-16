@@ -375,6 +375,11 @@ class UserProfileUpdateRequest(BaseModel):
         return self
 
 
+class AccountDeletionResponse(BaseModel):
+    status: Literal["deleted", "scheduled"] = "deleted"
+    detail: str = "Your account and personal data will be removed."
+
+
 class MobileSettings(BaseModel):
     allow_notifications: bool = True
     mentions: bool = True
