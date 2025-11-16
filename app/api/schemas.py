@@ -286,6 +286,8 @@ class ChatThreadSummary(BaseModel):
 
 class ChatThread(ChatThreadSummary):
     messages: List[ChatMessage] = Field(default_factory=list)
+    next_cursor: Optional[str] = None
+    has_more: bool = False
 
 
 class ChatMessageCreate(BaseModel):

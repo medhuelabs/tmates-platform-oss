@@ -958,15 +958,21 @@ class SupabaseDatabaseClient:
         *,
         limit: int = 200,
         ascending: bool = True,
+        before: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch messages for a thread."""
         try:
+
             def _query() -> List[Dict[str, Any]]:
-                result = (
+                query = (
                     self.client.table("chat_messages")
                     .select("*")
                     .eq("thread_id", thread_id)
-                    .order("created_at", desc=not ascending)
+                )
+                if before:
+                    query = query.lt("created_at", before.isoformat())
+                result = (
+                    query.order("created_at", desc=not ascending)
                     .limit(limit)
                     .execute()
                 )

@@ -26,6 +26,8 @@ from .websocket import notify_new_message
 router = APIRouter()
 
 MAX_MESSAGE_PREVIEW = 160
+DEFAULT_HISTORY_LIMIT = 50
+MAX_HISTORY_LIMIT = 200
 
 
 def _raise_transient_chat_error(exc: TransientDatabaseError) -> None:
@@ -351,7 +353,11 @@ def create_chat_thread(
 def get_chat_thread(
     thread_id: str,
     context=Depends(get_database_with_user),
-    limit: int = Query(default=200, ge=1, le=500),
+    limit: int = Query(default=DEFAULT_HISTORY_LIMIT, ge=1, le=MAX_HISTORY_LIMIT),
+    cursor: Optional[str] = Query(
+        default=None,
+        description="Return messages older than this ISO 8601 timestamp (exclusive).",
+    ),
 ) -> ChatThread:
     """Return a chat thread with recent messages."""
 
@@ -373,16 +379,56 @@ def get_chat_thread(
         )
     _ensure_thread_access(thread, user_id)
 
+    before_timestamp: Optional[datetime] = None
+    if cursor:
+        cleaned = cursor.strip()
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        try:
+            before_timestamp = datetime.fromisoformat(cleaned)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid cursor format. Provide an ISO 8601 timestamp.",
+            ) from exc
+
+    page_limit = min(limit, MAX_HISTORY_LIMIT)
+    fetch_limit = min(page_limit + 1, MAX_HISTORY_LIMIT + 1)
+
     try:
         messages_raw = db.list_chat_messages(
             thread_id,
-            limit=limit,
-            ascending=True,
+            limit=fetch_limit,
+            ascending=False,
+            before=before_timestamp,
         )
     except TransientDatabaseError as exc:
         _raise_transient_chat_error(exc)
-    messages = [_convert_message(record) for record in messages_raw]
-    last_message = messages[-1] if messages else None
+
+    has_more = len(messages_raw) > page_limit
+    bounded_records = messages_raw[:page_limit] if has_more else messages_raw
+    messages = [_convert_message(record) for record in reversed(bounded_records)]
+
+    next_cursor: Optional[str] = None
+    if has_more and messages:
+        created_at = messages[0].created_at
+        if hasattr(created_at, "isoformat"):
+            next_cursor = created_at.isoformat()
+        elif isinstance(created_at, str):
+            next_cursor = created_at
+
+    if cursor:
+        try:
+            latest_records = db.list_chat_messages(
+                thread_id,
+                limit=1,
+                ascending=False,
+            )
+        except TransientDatabaseError as exc:
+            _raise_transient_chat_error(exc)
+        last_message = _convert_message(latest_records[0]) if latest_records else None
+    else:
+        last_message = messages[-1] if messages else None
     summary = _convert_summary(thread, last_message)
     return ChatThread(
         id=summary.id,
@@ -394,6 +440,8 @@ def get_chat_thread(
         unread_count=summary.unread_count,
         active_session_id=summary.active_session_id,
         messages=messages,
+        has_more=has_more,
+        next_cursor=next_cursor,
     )
 
 
