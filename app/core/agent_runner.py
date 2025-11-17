@@ -30,91 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 _CANCEL_KEYWORDS = ("stop", "cancel")
-_RECENT_ATTACHMENT_MESSAGE_LIMIT = 25
-_MAX_HISTORY_ATTACHMENTS = 12
-_DOWNLOAD_URI_MARKERS = (
-    "/api/files/download/",
-    "/api/v1/files/download/",
-    "/v1/files/download/",
-    "/files/download/",
-)
-
-
-def _attachment_identity(entry: Dict[str, Any]) -> Optional[str]:
-    for key in ("relative_path", "download_url", "uri", "name", "filename", "file_name"):
-        value = entry.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip().lower()
-    return None
-
-
-def _derive_relative_path(candidate: Optional[str]) -> Optional[str]:
-    if not isinstance(candidate, str):
-        return None
-    stripped = candidate.split("?", 1)[0].strip()
-    if not stripped:
-        return None
-    for marker in _DOWNLOAD_URI_MARKERS:
-        if marker in stripped:
-            return stripped.split(marker, 1)[1].lstrip("/") or None
-    return stripped.lstrip("/") or None
-
-
-def _normalize_attachment_entry(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if not isinstance(entry, dict):
-        return None
-    normalized = dict(entry)
-    if not normalized.get("relative_path"):
-        relative_path = None
-        for key in ("relative_path", "uri", "download_url", "url"):
-            relative_path = _derive_relative_path(normalized.get(key))
-            if relative_path:
-                normalized["relative_path"] = relative_path
-                break
-    return normalized
-
-
-def _collect_recent_thread_attachments(db, thread_id: str) -> List[Dict[str, Any]]:
-    """Return a deduplicated slice of the most recent attachments for the thread."""
-
-    try:
-        messages = db.list_chat_messages(
-            thread_id,
-            limit=_RECENT_ATTACHMENT_MESSAGE_LIMIT,
-            ascending=False,
-        )
-    except Exception as exc:  # pragma: no cover - defensive log
-        logger.warning(
-            "Unable to preload attachments for thread %s: %s",
-            thread_id,
-            exc,
-        )
-        return []
-
-    attachments: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for message in messages:
-        payload = message.get("payload") if isinstance(message, dict) else None
-        if not isinstance(payload, dict):
-            continue
-        raw_items = payload.get("attachments")
-        if not isinstance(raw_items, list):
-            continue
-        for item in raw_items:
-            normalized = _normalize_attachment_entry(item)
-            if not normalized:
-                continue
-            identity = _attachment_identity(normalized)
-            if identity and identity in seen:
-                continue
-            if identity:
-                seen.add(identity)
-            attachments.append(normalized)
-            if len(attachments) >= _MAX_HISTORY_ATTACHMENTS:
-                return attachments
-
-    return attachments
 
 
 def _parse_cancel_command(message: str) -> tuple[bool, Optional[str]]:
@@ -280,19 +195,6 @@ async def process_agents_for_message(
             attachment_names,
         )
 
-    history_attachments = _collect_recent_thread_attachments(database_client, thread_id)
-    if normalised_attachments and history_attachments:
-        current_keys = {
-            key
-            for key in (_attachment_identity(entry) for entry in normalised_attachments)
-            if key
-        }
-        if current_keys:
-            history_attachments = [
-                entry
-                for entry in history_attachments
-                if _attachment_identity(entry) not in current_keys
-            ]
     try:
         user_context, organization, _ = resolve_user_context(user_id)
         apply_user_context_to_env(user_context)
@@ -449,8 +351,6 @@ async def process_agents_for_message(
                 }
                 if normalised_attachments:
                     job_metadata["attachments"] = normalised_attachments
-                if history_attachments:
-                    job_metadata["history_attachments"] = history_attachments
                 payload = {
                     "cli_args": {
                         "message": message_text,
@@ -464,8 +364,6 @@ async def process_agents_for_message(
                 }
                 if normalised_attachments:
                     payload["cli_args"]["attachments"] = normalised_attachments
-                if history_attachments:
-                    payload["cli_args"]["history_attachments"] = history_attachments
 
                 job_record = database_client.create_agent_job(
                     user_context.user_id,
