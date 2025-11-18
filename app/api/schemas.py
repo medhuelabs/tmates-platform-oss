@@ -311,6 +311,7 @@ class FileEntry(BaseModel):
     modified_display: str
     modified_iso: Optional[str] = None
     download_url: str
+    original_name: Optional[str] = None
 
 
 class FileListing(BaseModel):
@@ -328,6 +329,7 @@ class UploadedFile(BaseModel):
     download_url: str
     mime_type: str
     size: int
+    original_name: Optional[str] = None
 
 
 class FileUploadResponse(BaseModel):

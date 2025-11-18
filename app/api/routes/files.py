@@ -121,6 +121,7 @@ async def upload_file(
             file_name=file.filename or "upload.bin",
             content=data,
             mime_type=mime_type,
+            original_name=file.filename or "upload.bin",
         )
     except StorageError as exc:
         raise HTTPException(
@@ -134,6 +135,7 @@ async def upload_file(
         download_url=saved.download_url,
         mime_type=saved.mime_type,
         size=saved.size,
+        original_name=saved.original_name,
     )
 
     return FileUploadResponse(file=uploaded)

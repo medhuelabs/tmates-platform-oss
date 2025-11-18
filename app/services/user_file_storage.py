@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 import os
@@ -63,6 +64,7 @@ class SavedFileInfo:
     download_url: str
     mime_type: str
     size: int
+    original_name: Optional[str] = None
 
 
 def _sanitize_file_name(candidate: str, default: str = "upload.bin") -> str:
@@ -96,6 +98,7 @@ class UserFileStorageBackend:
         file_name: str,
         content: bytes,
         mime_type: str,
+        original_name: Optional[str] = None,
     ) -> SavedFileInfo:
         raise NotImplementedError
 
@@ -105,6 +108,7 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
 
     backend_id = "local"
     requires_temporary_directory = False
+    _metadata_filename = ".tmates-files.json"
 
     def list_files(self, user_context: UserContext, *, limit: int) -> Dict[str, object]:
         download_dir = resolve_download_directory(
@@ -112,7 +116,17 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
             default_subdir=f"users/{user_context.user_id}",
             ensure_exists=True,
         )
-        return collect_user_files(download_dir, limit=limit)
+        summary = collect_user_files(download_dir, limit=limit)
+        metadata = self._load_metadata(download_dir)
+        if metadata:
+            for entry in summary.get("files", []):
+                relative_path = entry.get("relative_path")
+                if not relative_path:
+                    continue
+                original_name = metadata.get(relative_path)
+                if original_name:
+                    entry["original_name"] = original_name
+        return summary
 
     def retrieve_file(self, user_context: UserContext, relative_path: str) -> StorageFileResult:
         download_dir = resolve_download_directory(
@@ -152,6 +166,11 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
             raise StorageFileNotFound(str(exc)) from exc
         except OSError as exc:
             raise StorageError(str(exc)) from exc
+        try:
+            relative_key = target.relative_to(download_dir).as_posix()
+        except ValueError:
+            relative_key = Path(relative_path).name
+        self._remove_metadata_entry(download_dir, relative_key)
 
     @staticmethod
     def _resolve_path(root: Path, relative_path: str) -> Path:
@@ -175,6 +194,7 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
         file_name: str,
         content: bytes,
         mime_type: str,
+        original_name: Optional[str] = None,
     ) -> SavedFileInfo:
         directory = resolve_download_directory(
             user_context=user_context,
@@ -191,6 +211,7 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
 
         relative_path = target.name
         download_url = f"/v1/files/download/{quote(relative_path)}"
+        self._write_metadata_entry(directory, relative_path, original_name or safe_name)
 
         return SavedFileInfo(
             file_name=target.name,
@@ -198,7 +219,48 @@ class LocalUserFileStorageBackend(UserFileStorageBackend):
             download_url=download_url,
             mime_type=mime_type,
             size=len(content),
+            original_name=original_name or safe_name,
         )
+
+    def _metadata_path(self, directory: Path) -> Path:
+        return directory / self._metadata_filename
+
+    def _load_metadata(self, directory: Path) -> Dict[str, str]:
+        path = self._metadata_path(directory)
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            logger.debug("Failed to read local file metadata from %s", path, exc_info=True)
+            return {}
+
+    def _write_metadata_entry(self, directory: Path, relative_path: str, original_name: str) -> None:
+        if not original_name:
+            return
+        metadata = self._load_metadata(directory)
+        metadata[relative_path] = original_name
+        path = self._metadata_path(directory)
+        try:
+            path.write_text(json.dumps(metadata))
+        except Exception:
+            logger.debug("Failed to persist local metadata entry for %s", relative_path, exc_info=True)
+
+    def _remove_metadata_entry(self, directory: Path, relative_path: str) -> None:
+        path = self._metadata_path(directory)
+        if not path.exists():
+            return
+        try:
+            metadata = json.loads(path.read_text())
+        except Exception:
+            return
+        if relative_path not in metadata:
+            return
+        metadata.pop(relative_path, None)
+        try:
+            path.write_text(json.dumps(metadata))
+        except Exception:
+            logger.debug("Failed to update local metadata file after deleting %s", relative_path, exc_info=True)
 
 
 class SupabaseUserFileStorageBackend(UserFileStorageBackend):
@@ -252,6 +314,11 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
 
         descriptors: List[FileDescriptor] = []
         total_size = 0
+        metadata_map = {}
+        try:
+            metadata_map = self._load_metadata_map(user_context)
+        except StorageError:
+            logger.debug("Supabase metadata unavailable for %s", user_context.user_id, exc_info=True)
 
         for full_path, metadata in entries:
             relative_path = self._relative_to_user(full_path, user_prefix)
@@ -266,6 +333,7 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
 
             download_url = self._build_download_url(full_path, relative_path)
 
+            original_name = metadata_map.get(relative_path)
             descriptors.append(
                 FileDescriptor(
                     name=PurePosixPath(relative_path).name,
@@ -276,6 +344,7 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
                     modified_display=format_file_timestamp(modified),
                     modified_iso=modified.isoformat(timespec="seconds"),
                     download_url=download_url,
+                    original_name=original_name,
                 )
             )
 
@@ -334,6 +403,8 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
 
         if isinstance(response, list) and not response:
             raise StorageFileNotFound("File not removed; Supabase returned empty response")
+
+        self._remove_metadata_entry(user_context, cleaned_path)
 
         local_dir = resolve_download_directory(
             user_context=user_context,
@@ -417,6 +488,7 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
         file_name: str,
         content: bytes,
         mime_type: str,
+        original_name: Optional[str] = None,
     ) -> SavedFileInfo:
         safe_name = _sanitize_file_name(file_name)
         suffix = Path(safe_name).suffix
@@ -448,6 +520,7 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
                 pass
 
         download_url = self._build_download_url(storage_path, cleaned_path)
+        self._update_metadata_entry(user_context, cleaned_path, original_name or safe_name)
 
         return SavedFileInfo(
             file_name=cleaned_path,
@@ -455,6 +528,7 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
             download_url=download_url,
             mime_type=mime_type,
             size=len(content),
+            original_name=original_name or safe_name,
         )
 
     def _walk_supabase_tree(self, prefix: str) -> Iterable[Tuple[str, Dict[str, object]]]:
@@ -542,6 +616,69 @@ class SupabaseUserFileStorageBackend(UserFileStorageBackend):
                     str(file_path),
                     file_options={"content-type": content_type},
                 )
+
+    def _metadata_storage_path(self, user_id: str) -> str:
+        return self._full_storage_path(user_id, "_metadata.json")
+
+    def _load_metadata_map(self, user_context: UserContext) -> Dict[str, str]:
+        bucket = self.client.storage.from_(self.bucket_name)
+        path = self._metadata_storage_path(user_context.user_id)
+        try:
+            data = bucket.download(path)
+        except StorageApiError as exc:
+            if getattr(exc, "status", None) == 404:
+                return {}
+            raise StorageError(f"Supabase metadata download failed: {exc}") from exc
+        except FileNotFoundError:
+            return {}
+        if not data:
+            return {}
+        try:
+            return json.loads(data.decode("utf-8"))
+        except Exception:
+            logger.debug("Failed to parse Supabase metadata for %s", user_context.user_id, exc_info=True)
+            return {}
+
+    def _save_metadata_map(self, user_context: UserContext, mapping: Dict[str, str]) -> None:
+        bucket = self.client.storage.from_(self.bucket_name)
+        path = self._metadata_storage_path(user_context.user_id)
+        temp_dir = Path(tempfile.mkdtemp(prefix="supabase-metadata-"))
+        temp_file = temp_dir / "metadata.json"
+        temp_file.write_text(json.dumps(mapping))
+        try:
+            bucket.upload(
+                path,
+                str(temp_file),
+                file_options={"content-type": "application/json", "cacheControl": "60"},
+            )
+        except StorageApiError as exc:
+            raise StorageError(f"Supabase metadata upload failed: {exc}") from exc
+        finally:
+            try:
+                temp_file.unlink(missing_ok=True)  # type: ignore[arg-type]
+                temp_dir.rmdir()
+            except Exception:
+                pass
+
+    def _update_metadata_entry(self, user_context: UserContext, relative_path: str, original_name: str) -> None:
+        if not original_name:
+            return
+        metadata = self._load_metadata_map(user_context)
+        metadata[relative_path] = original_name
+        try:
+            self._save_metadata_map(user_context, metadata)
+        except StorageError:
+            logger.debug("Failed to update Supabase metadata for %s", user_context.user_id, exc_info=True)
+
+    def _remove_metadata_entry(self, user_context: UserContext, relative_path: str) -> None:
+        metadata = self._load_metadata_map(user_context)
+        if relative_path not in metadata:
+            return
+        metadata.pop(relative_path, None)
+        try:
+            self._save_metadata_map(user_context, metadata)
+        except StorageError:
+            logger.debug("Failed to prune Supabase metadata for %s", user_context.user_id, exc_info=True)
             except StorageApiError as exc:
                 logger.error("Supabase upload failed for %s: %s", storage_path, exc)
                 continue
@@ -627,6 +764,7 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
             client_kwargs["config"] = BotoConfig(s3={"addressing_style": "path"})
 
         self.client = session.client("s3", **client_kwargs)
+        self._head_cache: Dict[str, Dict[str, str]] = {}
 
         try:
             self.client.head_bucket(Bucket=self.bucket_name)
@@ -677,6 +815,7 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
                     modified = datetime.now(timezone.utc)
 
                 download_url = self._build_download_url(key, relative_path)
+                original_name = self._original_name_for_key(key)
 
                 descriptors.append(
                     FileDescriptor(
@@ -688,6 +827,7 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
                         modified_display=format_file_timestamp(modified),
                         modified_iso=modified.isoformat(timespec="seconds"),
                         download_url=download_url,
+                        original_name=original_name,
                     )
                 )
 
@@ -767,6 +907,7 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
         file_name: str,
         content: bytes,
         mime_type: str,
+        original_name: Optional[str] = None,
     ) -> SavedFileInfo:
         safe_name = _sanitize_file_name(file_name)
         suffix = Path(safe_name).suffix
@@ -795,6 +936,7 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
             download_url=download_url,
             mime_type=mime_type,
             size=len(content),
+            original_name=original_name or safe_name,
         )
 
     def _api_download_url(self, relative_path: str) -> str:
@@ -812,6 +954,20 @@ class S3UserFileStorageBackend(UserFileStorageBackend):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Unexpected error creating S3 presigned URL for %s: %s", key, exc)
         return self._api_download_url(relative_path)
+
+    def _original_name_for_key(self, key: str) -> Optional[str]:
+        cached = self._head_cache.get(key)
+        if cached is not None:
+            return cached.get("original-name")
+        try:
+            response = self.client.head_object(Bucket=self.bucket_name, Key=key)
+        except self._client_error:
+            return None
+        except Exception:
+            return None
+        metadata = response.get("Metadata") or {}
+        self._head_cache[key] = metadata
+        return metadata.get("original-name")
 
     def _user_prefix(self, user_id: str) -> str:
         if self.prefix_root:
@@ -881,6 +1037,7 @@ def save_user_file(
     file_name: str,
     content: bytes,
     mime_type: str,
+    original_name: Optional[str] = None,
 ) -> SavedFileInfo:
     """Persist a user-provided file using the configured storage backend."""
 
@@ -891,6 +1048,7 @@ def save_user_file(
             file_name=file_name,
             content=content,
             mime_type=mime_type,
+            original_name=original_name or file_name,
         )
     except Exception as exc:
         raise StorageError(f"Failed to save user file: {exc}") from exc

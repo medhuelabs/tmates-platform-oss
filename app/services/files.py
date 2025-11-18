@@ -21,6 +21,7 @@ class FileDescriptor:
     modified_display: str
     modified_iso: str
     download_url: str
+    original_name: Optional[str] = None
 
 
 def format_file_size(num_bytes: int) -> str:
@@ -122,6 +123,7 @@ def serialize_file_descriptors(files: Iterable[FileDescriptor]) -> List[Dict[str
             "modified_display": descriptor.modified_display,
             "modified_iso": descriptor.modified_iso,
             "download_url": descriptor.download_url,
+            "original_name": descriptor.original_name,
         }
         for descriptor in files
     ]
