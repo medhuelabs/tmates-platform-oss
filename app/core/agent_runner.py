@@ -24,6 +24,7 @@ from app.billing import BillingManager
 from app.config import load_envs
 from app.db import TransientDatabaseError, get_database_client
 from app.registry.agents.loader import create_agent
+from app.registry.agents.store import get_agent_store
 from app.logger import log
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,7 @@ def resolve_user_context(user_id: str) -> tuple[UserContext, dict, list[str]]:
 
     # Filter out agents that no longer exist in the agent store
     try:
-        from app.registry.agents.store import AgentStore
-        agent_store = AgentStore()
+        agent_store = get_agent_store()
         available_agents = set(agent_store.discover_agents().keys())
         enabled_agents = [key for key in enabled_agents if key in available_agents]
     except Exception as e:

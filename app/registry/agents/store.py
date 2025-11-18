@@ -110,3 +110,21 @@ class AgentStore:
     def is_agent_available(self, agent_key: str) -> bool:
         """Check if an agent exists and is discoverable."""
         return self.get_agent(agent_key) is not None
+
+
+_GLOBAL_AGENT_STORE: Optional["AgentStore"] = None
+
+
+def get_agent_store(force_refresh: bool = False) -> AgentStore:
+    """Return a cached AgentStore instance so catalog data loads once."""
+
+    global _GLOBAL_AGENT_STORE
+    if force_refresh or _GLOBAL_AGENT_STORE is None:
+        _GLOBAL_AGENT_STORE = AgentStore()
+    return _GLOBAL_AGENT_STORE
+
+
+__all__ = [
+    "AgentStore",
+    "get_agent_store",
+]

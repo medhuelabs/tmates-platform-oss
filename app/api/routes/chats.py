@@ -329,8 +329,8 @@ def create_chat_thread(
             return _convert_summary(thread, last_message)
     
     # Create new thread
-    from app.registry.agents.store import AgentStore
-    agent_store = AgentStore()
+    from app.registry.agents.store import get_agent_store
+    agent_store = get_agent_store()
     agent_def = agent_store.get_agent(agent_key)
     agent_name = agent_def.name if agent_def else agent_key.title()
     
