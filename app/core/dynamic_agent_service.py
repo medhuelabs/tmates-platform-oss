@@ -130,35 +130,55 @@ class DynamicAgentService:
         manifest_snapshot = entry.get("manifest")
         manifest = manifest_snapshot if isinstance(manifest_snapshot, dict) else {}
         branding = manifest.get("branding") if isinstance(manifest.get("branding"), dict) else None
+        branding_data = dict(branding) if branding else {}
         ui_block = manifest.get("ui") if isinstance(manifest.get("ui"), dict) else None
 
         metadata: Dict[str, Any] = {
             "key": agent_key,
             "name": entry.get("name") or manifest.get("name") or agent_key.title(),
             "description": entry.get("description") or manifest.get("description") or f"{agent_key.title()} Agent",
-            "icon": entry.get("icon") or (branding.get("avatar_url") if branding else None),
+            "role": entry.get("role") or manifest.get("role"),
+            "category": entry.get("category") or manifest.get("category"),
+            "icon": entry.get("avatar_image_url") or entry.get("icon") or (branding.get("avatar_url") if branding else None),
             "docs": manifest.get("docs"),
+            "color": entry.get("color") or (branding.get("color") if branding else None),
+            "capabilities": entry.get("capabilities") or manifest.get("capabilities"),
+            "tools": entry.get("tools") or manifest.get("tools"),
+            "author": entry.get("author") or manifest.get("author"),
         }
 
         if manifest:
             metadata["manifest"] = manifest
-        if branding:
-            metadata["branding"] = branding
+        if entry.get("color") and not branding_data.get("color"):
+            branding_data["color"] = entry["color"]
+        if entry.get("avatar_image_url") and not branding_data.get("avatar_url"):
+            branding_data["avatar_url"] = entry["avatar_image_url"]
+        if entry.get("cover_image_url") and not branding_data.get("cover_url"):
+            branding_data["cover_url"] = entry["cover_image_url"]
+        if branding_data:
+            metadata["branding"] = branding_data
         if ui_block:
             metadata["ui"] = ui_block
             settings_block = ui_block.get("settings")
             if isinstance(settings_block, dict):
                 metadata["settings"] = settings_block
-        developer_site = manifest.get("developer_website")
-        privacy_policy = manifest.get("privacy_policy")
+        developer_site = entry.get("developer_website") or manifest.get("developer_website")
+        privacy_policy = entry.get("privacy_policy") or manifest.get("privacy_policy")
         if developer_site:
             metadata["developer_website"] = developer_site
         if privacy_policy:
             metadata["privacy_policy"] = privacy_policy
 
-        version = entry.get("version")
+        if entry.get("examples"):
+            metadata["examples"] = entry.get("examples")
+
+        version = entry.get("version") or entry.get("latest_version")
         if version:
             metadata["version"] = version
+
+        last_updated = entry.get("last_updated") or manifest.get("last_updated")
+        if last_updated:
+            metadata["last_updated"] = last_updated
 
         return metadata
     

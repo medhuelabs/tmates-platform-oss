@@ -429,6 +429,18 @@ CREATE TABLE IF NOT EXISTS agent_catalog_agents (
     description TEXT,
     icon_url TEXT,
     category TEXT,
+    role TEXT,
+    color TEXT,
+    capabilities JSONB,
+    tools JSONB,
+    author TEXT,
+    latest_version TEXT,
+    last_updated TEXT,
+    developer_website TEXT,
+    privacy_policy TEXT,
+    avatar_image_url TEXT,
+    cover_image_url TEXT,
+    examples JSONB,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', NOW()),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', NOW())
 );

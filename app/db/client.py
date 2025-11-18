@@ -1444,7 +1444,7 @@ class SupabaseDatabaseClient:
                 self.client.table("agent_catalog_versions")
                 .select(
                     "agent_key, version, status, manifest_snapshot, bundle_url, bundle_checksum, bundle_signature, signature_algorithm, published_at, "
-                    "agent:agent_catalog_agents(key, display_name, description, icon_url, category)"
+                    "agent:agent_catalog_agents(key, display_name, description, icon_url, category, role, color, capabilities, tools, author, latest_version, last_updated, developer_website, privacy_policy, avatar_image_url, cover_image_url, examples)"
                 )
                 .eq("status", "published")
                 .order("agent_key", desc=False)
@@ -1489,6 +1489,18 @@ class SupabaseDatabaseClient:
                 "description": agent_block.get("description"),
                 "icon": agent_block.get("icon_url"),
                 "category": agent_block.get("category"),
+                "role": agent_block.get("role"),
+                "color": agent_block.get("color"),
+                "capabilities": agent_block.get("capabilities"),
+                "tools": agent_block.get("tools"),
+                "author": agent_block.get("author"),
+                "latest_version": agent_block.get("latest_version"),
+                "last_updated": agent_block.get("last_updated"),
+                "developer_website": agent_block.get("developer_website"),
+                "privacy_policy": agent_block.get("privacy_policy"),
+                "avatar_image_url": agent_block.get("avatar_image_url"),
+                "cover_image_url": agent_block.get("cover_image_url"),
+                "examples": agent_block.get("examples"),
                 "version": row.get("version"),
                 "status": row.get("status"),
                 "audience": audience_block,
