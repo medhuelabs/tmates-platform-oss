@@ -400,7 +400,7 @@ def run_agent_job(
                 attachments = None
 
             if attachments:
-                print(f"[Celery] Agent {agent_key} returned attachments: {attachments}")
+                logger.debug("[Celery] Agent %s returned attachments: %s", agent_key, attachments)
 
             sanitized_response = _strip_attachment_links(
                 agent_response,

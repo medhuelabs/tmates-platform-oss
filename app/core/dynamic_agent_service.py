@@ -5,10 +5,13 @@ This replaces hard-coded agent definitions with dynamic discovery from the agent
 """
 
 from typing import Dict, List, Optional, Any
+import logging
 
 from app.config import CONFIG
 from app.db import get_database_client
 from app.registry.agents.repository import AgentRepository
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicAgentService:
@@ -35,8 +38,8 @@ class DynamicAgentService:
 
         try:
             entries = db.list_agent_catalog_agents(environment=env)
-        except Exception as exc:
-            print(f"DynamicAgentService: failed to load catalog entries: {exc}")
+        except Exception:
+            logger.exception("DynamicAgentService failed to load catalog entries for env=%s", env)
             return {}
 
         catalog: Dict[str, Dict[str, Any]] = {}

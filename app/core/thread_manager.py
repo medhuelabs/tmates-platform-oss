@@ -6,8 +6,11 @@ automatic thread manipulation has been deprecated in favor of mobile-first archi
 """
 
 from typing import List, Dict, Any, Optional
+import logging
 from app.db import get_database_client
 from app.auth import UserContext
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadManager:
@@ -41,9 +44,13 @@ class ThreadManager:
             
             # If current agent_keys don't match expected, fix them
             if sorted(current_agent_keys) != sorted(expected_agent_keys):
-                print(f"ThreadManager: Fixing thread {thread_id} - '{thread.get('title')}'")
-                print(f"  Current agent_keys: {current_agent_keys}")
-                print(f"  Expected agent_keys: {expected_agent_keys}")
+                logger.debug(
+                    "ThreadManager adjusting agent_keys for thread %s (%s)",
+                    thread_id,
+                    thread.get("title"),
+                )
+                logger.debug("Current agent_keys: %s", current_agent_keys)
+                logger.debug("Expected agent_keys: %s", expected_agent_keys)
                 
                 # Update the agent_keys directly on the thread
                 result = self.db.update_chat_thread(thread_id, {
@@ -51,16 +58,16 @@ class ThreadManager:
                 })
                 
                 if result:
-                    print(f"  ✅ Fixed agent_keys: {result.get('agent_keys', [])}")
+                    logger.debug("Updated agent_keys: %s", result.get("agent_keys", []))
                     return True
                 else:
-                    print(f"  ❌ Failed to fix agent_keys")
+                    logger.warning("Failed to update agent_keys for thread %s", thread_id)
                     return False
             
             return False  # No update needed
             
-        except Exception as e:
-            print(f"ThreadManager: Error ensuring agent_keys for thread {thread_id}: {e}")
+        except Exception:
+            logger.exception("ThreadManager error ensuring agent_keys for thread %s", thread_id)
             return False
     
     def ensure_all_user_threads(self, user_id: str, user_context: UserContext, organization_id: str) -> int:
@@ -78,12 +85,12 @@ class ThreadManager:
                     fixed_count += 1
             
             if fixed_count > 0:
-                print(f"ThreadManager: Fixed {fixed_count} threads for user {user_id}")
+                logger.info("ThreadManager fixed %s threads for user %s", fixed_count, user_id)
             
             return fixed_count
             
-        except Exception as e:
-            print(f"ThreadManager: Error ensuring all threads for user {user_id}: {e}")
+        except Exception:
+            logger.exception("ThreadManager error ensuring threads for user %s", user_id)
             return 0
     
     def _get_expected_agent_keys(self, title: str, enabled_agents: List[str]) -> List[str]:

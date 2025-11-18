@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -34,6 +35,8 @@ from app.billing.plans import PlanContext
 from app.config import CONFIG
 from app.db import DatabaseClient
 from app.registry.agents.store import AgentStore
+
+logger = logging.getLogger(__name__)
 
 
 TEAM_CHAT_TITLE = "Team Chat"
@@ -99,8 +102,8 @@ def _ensure_dm_thread_with_welcome(
             organization_id=organization_id,
             limit=200,
         )
-    except Exception as exc:
-        print(f"Failed to list chat threads during onboarding DM seed: {exc}")
+    except Exception:
+        logger.exception("Failed to list chat threads during onboarding DM seed")
         threads = []
 
     target_thread: Optional[Dict[str, Any]] = None
@@ -131,8 +134,8 @@ def _ensure_dm_thread_with_welcome(
             if thread:
                 target_thread = thread
                 created_thread = True
-        except Exception as exc:
-            print(f"Failed to create onboarding DM thread: {exc}")
+        except Exception:
+            logger.exception("Failed to create onboarding DM thread")
             return
 
     if not target_thread:
@@ -140,8 +143,8 @@ def _ensure_dm_thread_with_welcome(
 
     try:
         history = db.list_chat_messages(target_thread.get("id"), limit=10, ascending=True)
-    except Exception as exc:
-        print(f"Failed to list onboarding DM messages: {exc}")
+    except Exception:
+        logger.exception("Failed to list onboarding DM messages")
         history = []
 
     if history and _has_onboarding_message(history):
@@ -160,8 +163,8 @@ def _ensure_dm_thread_with_welcome(
             user_id=user_id,
         )
         db.touch_chat_thread(target_thread.get("id"))
-    except Exception as exc:
-        print(f"Failed to insert onboarding DM welcome message: {exc}")
+    except Exception:
+        logger.exception("Failed to insert onboarding DM welcome message")
 
 
 def _ensure_team_chat_with_welcome(
@@ -177,8 +180,8 @@ def _ensure_team_chat_with_welcome(
             organization_id=organization_id,
             limit=200,
         )
-    except Exception as exc:
-        print(f"Failed to list threads during team chat seed: {exc}")
+    except Exception:
+        logger.exception("Failed to list threads during team chat seed")
         threads = []
 
     team_thread: Optional[Dict[str, Any]] = None
@@ -206,8 +209,8 @@ def _ensure_team_chat_with_welcome(
             )
             if thread:
                 team_thread = thread
-        except Exception as exc:
-            print(f"Failed to create team chat thread during onboarding: {exc}")
+        except Exception:
+            logger.exception("Failed to create team chat thread during onboarding")
             return
 
     if not team_thread:
@@ -215,8 +218,8 @@ def _ensure_team_chat_with_welcome(
 
     try:
         history = db.list_chat_messages(team_thread.get("id"), limit=10, ascending=True)
-    except Exception as exc:
-        print(f"Failed to list team chat messages during onboarding seed: {exc}")
+    except Exception:
+        logger.exception("Failed to list team chat messages during onboarding seed")
         history = []
 
     if history and _has_onboarding_message(history):
@@ -239,8 +242,8 @@ def _ensure_team_chat_with_welcome(
             user_id=user_id,
         )
         db.touch_chat_thread(team_thread.get("id"))
-    except Exception as exc:
-        print(f"Failed to insert team chat welcome message: {exc}")
+    except Exception:
+        logger.exception("Failed to insert team chat welcome message")
 
 
 
@@ -394,7 +397,7 @@ def onboard_billing_customer(
             organization_id=str_org_id,
         )
     except Exception as onboarding_exc:  # pragma: no cover - defensive onboarding seed
-        print(f"Failed to seed onboarding chat content: {onboarding_exc}")
+        logger.exception("Failed to seed onboarding chat content: %s", onboarding_exc)
 
     updates: Dict[str, Any] = {}
     plan_key = request.plan_key

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from threading import Lock
 from typing import Any, Dict, List
+import logging
 
 _REGISTRY: Dict[str, List[Dict[str, Any]]] = {}
 _LOCK = Lock()
+logger = logging.getLogger(__name__)
 
 
 def register_generated_attachments(job_id: str | None, attachments: List[Dict[str, Any]] | None) -> None:
@@ -18,7 +20,7 @@ def register_generated_attachments(job_id: str | None, attachments: List[Dict[st
     with _LOCK:
         bucket = _REGISTRY.setdefault(job_id, [])
         bucket.extend(attachments)
-        print(f"[Registry] Registered attachments for {job_id}: {attachments}")
+        logger.debug("[Registry] Registered attachments for %s: %s", job_id, attachments)
 
 
 def consume_generated_attachments(job_id: str | None) -> List[Dict[str, Any]]:
@@ -30,7 +32,7 @@ def consume_generated_attachments(job_id: str | None) -> List[Dict[str, Any]]:
     with _LOCK:
         attachments = _REGISTRY.pop(job_id, [])
         if attachments:
-            print(f"[Registry] Consumed attachments for {job_id}: {attachments}")
+            logger.debug("[Registry] Consumed attachments for %s: %s", job_id, attachments)
         return attachments
 
 
@@ -39,4 +41,3 @@ def clear_generated_attachments() -> None:
 
     with _LOCK:
         _REGISTRY.clear()
-

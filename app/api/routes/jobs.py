@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
@@ -19,6 +20,7 @@ from ..schemas import AgentJob, AgentJobCreate
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -189,8 +191,8 @@ async def cancel_job(
 
     try:
         celery_app.control.revoke(job_id, terminate=True, signal="SIGTERM")
-    except Exception as exc:
-        print(f"Failed to revoke job {job_id}: {exc}")
+    except Exception:
+        logger.exception("Failed to revoke job %s", job_id)
 
     thread_id = metadata.get("thread_id")
     if thread_id:
@@ -199,8 +201,8 @@ async def cancel_job(
         try:
             await notify_chat_status(user_id, thread_id, "agent_cancelled", {"agent": job.get("agent_key")})
             await notify_chat_status(user_id, thread_id, "agent_processing_completed")
-        except Exception as ws_error:
-            print(f"Failed to send cancellation status for job {job_id}: {ws_error}")
+        except Exception:
+            logger.exception("Failed to send cancellation status for job %s", job_id)
 
     record = updated_job or job
     return AgentJob.from_record(record)

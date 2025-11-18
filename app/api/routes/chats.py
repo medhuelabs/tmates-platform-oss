@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 import uuid
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
@@ -22,6 +23,8 @@ from app.core.agent_runner import resolve_user_context
 from app.db import TransientDatabaseError
 from app.services.team_chat_dispatcher import TeamDispatchResult, team_chat_dispatcher
 from .websocket import notify_new_message
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -185,8 +188,8 @@ async def _emit_dispatcher_decline_message(
             organization_id=organization_id,
             user_id=user_id,
         )
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"Failed to insert dispatcher decline message: {exc}")
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to insert dispatcher decline message for thread %s", thread_id)
         return
 
     if not system_record:
@@ -207,8 +210,8 @@ async def _emit_dispatcher_decline_message(
         if hasattr(notification["created_at"], "isoformat"):
             notification["created_at"] = notification["created_at"].isoformat()
         await notify_new_message(user_id, thread_id, notification)
-    except Exception as ws_error:
-        print(f"Failed to broadcast dispatcher decline message: {ws_error}")
+    except Exception:
+        logger.exception("Failed to broadcast dispatcher decline message for thread %s", thread_id)
 
 
 @router.get("/chats", response_model=List[ChatThreadSummary], status_code=status.HTTP_200_OK)
@@ -549,8 +552,8 @@ async def reset_chat_session(
 
     try:
         db.update_chat_thread(thread_id, {"active_session_id": new_session_id})
-    except Exception as exc:
-        print(f"Failed to update active session for thread {thread_id}: {exc}")
+    except Exception:
+        logger.exception("Failed to update active session for thread %s", thread_id)
 
     timestamp = datetime.now(timezone.utc)
     timestamp_iso = timestamp.isoformat()
@@ -593,8 +596,8 @@ async def reset_chat_session(
     }
     try:
         await notify_new_message(user_id, thread_id, notification)
-    except Exception as exc:
-        print(f"Failed to broadcast session reset message: {exc}")
+    except Exception:
+        logger.exception("Failed to broadcast session reset message for thread %s", thread_id)
 
     return ChatSessionResetResponse(session_id=new_session_id, message=message)
 
@@ -697,16 +700,17 @@ async def send_chat_message_internal(
         )
 
         if dispatcher_result.error:
-            print(f"[dispatcher] Routing fallback due to error: {dispatcher_result.error}")
+            logger.warning("[dispatcher] Routing fallback due to error: %s", dispatcher_result.error)
 
         if dispatcher_result.selected_agent_key:
             selected = dispatcher_result.selected_agent_key
             if selected in eligible_agent_keys:
                 turn_agent_keys = [selected]
             else:
-                print(
-                    f"[dispatcher] Selected agent '{selected}' not in eligible roster {eligible_agent_keys}; "
-                    "falling back to default routing."
+                logger.warning(
+                    "[dispatcher] Selected agent '%s' not in eligible roster %s; falling back to default routing.",
+                    selected,
+                    eligible_agent_keys,
                 )
         elif dispatcher_result.declined:
             turn_agent_keys = []
@@ -732,8 +736,8 @@ async def send_chat_message_internal(
     if active_session_id and active_session_id != thread_active_session:
         try:
             db.update_chat_thread(thread_id, {"active_session_id": active_session_id})
-        except Exception as exc:
-            print(f"Failed to persist active_session_id for thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Failed to persist active_session_id for thread %s", thread_id)
 
     attachments_list: List[Dict[str, Any]] = []
     if attachments:
@@ -741,7 +745,7 @@ async def send_chat_message_internal(
             try:
                 attachment_model = ChatMessageAttachment.model_validate(entry)
             except ValidationError as exc:
-                print(f"Invalid attachment skipped: {exc}")
+                logger.warning("Invalid attachment skipped: %s", exc)
                 continue
 
             payload_dict = attachment_model.model_dump(exclude_none=True)
@@ -756,8 +760,10 @@ async def send_chat_message_internal(
             attachments_list.append(payload_dict)
 
     if attachments_list:
-        print(
-            f"[API] Received {len(attachments_list)} attachment(s) for message {thread_id}: {attachments_list}"
+        logger.debug(
+            "[API] Received %s attachment(s) for message %s",
+            len(attachments_list),
+            thread_id,
         )
 
     # Store the user message
@@ -799,8 +805,8 @@ async def send_chat_message_internal(
             notification_data["created_at"] = notification_data["created_at"].isoformat()
             
         await notify_new_message(user_id, thread_id, notification_data)
-    except Exception as ws_error:
-        print(f"WebSocket notification failed: {ws_error}")
+    except Exception:
+        logger.exception("WebSocket notification failed for thread %s", thread_id)
 
     # Handle scenarios where no teammate will be dispatched
     if not turn_agent_keys:
@@ -814,8 +820,8 @@ async def send_chat_message_internal(
             from app.api.routes.websocket import notify_chat_status
 
             await notify_chat_status(user_id, thread_id, "agent_processing_completed")
-        except Exception as ws_error:
-            print(f"Failed to send completion status after dispatcher decline: {ws_error}")
+        except Exception:
+            logger.exception("Failed to send completion status after dispatcher decline for thread %s", thread_id)
         return user_message_data
 
     # Trigger agent processing - Mobile-first approach
@@ -846,26 +852,30 @@ async def send_chat_message_internal(
                 try:
                     from app.api.routes.websocket import notify_chat_status
                     await notify_chat_status(user_id, thread_id, "agent_processing_started")
-                    print(f"Sent agent_processing_started notification for thread {thread_id}")
-                except Exception as ws_error:
-                    print(f"Failed to send agent_processing_started notification: {ws_error}")
+                    logger.debug("Sent agent_processing_started notification for thread %s", thread_id)
+                except Exception:
+                    logger.exception("Failed to send agent_processing_started notification for thread %s", thread_id)
             elif not celery_agents_dispatched:
                 # No agents responded AND no Celery agents were dispatched, send completion immediately
                 try:
                     from app.api.routes.websocket import notify_chat_status
                     await notify_chat_status(user_id, thread_id, "agent_processing_completed")
-                    print(f"No agents responded for thread {thread_id}, sent completion status")
-                except Exception as ws_error:
-                    print(f"Failed to send agent_processing_completed notification: {ws_error}")
+                    logger.debug("No agents responded for thread %s, sent completion status", thread_id)
+                except Exception:
+                    logger.exception("Failed to send agent_processing_completed notification for thread %s", thread_id)
             else:
                 # Celery agents were dispatched, they will handle their own completion
-                print(f"Celery agents {celery_agents_dispatched} dispatched for thread {thread_id}, skipping immediate completion")
+                logger.debug(
+                    "Celery agents %s dispatched for thread %s, skipping immediate completion",
+                    celery_agents_dispatched,
+                    thread_id,
+                )
             
             # If an agent response was generated, notify via WebSocket
             if result and "messages" in result and len(result["messages"]) > 1:
                 agent_message = result["messages"][-1]
                 try:
-                    print(f"Sending WebSocket notification for agent message: {agent_message.get('id')}")
+                    logger.debug("Sending WebSocket notification for agent message %s", agent_message.get("id"))
                     raw_attachments = agent_message.get("attachments", []) or []
                     serialized_agent_attachments: List[Dict[str, Any]] = []
                     if isinstance(raw_attachments, list):
@@ -875,9 +885,9 @@ async def send_chat_message_internal(
                                     attachment_model = ChatMessageAttachment.model_validate(entry)
                                     serialized_agent_attachments.append(attachment_model.model_dump(exclude_none=True))
                                 except ValidationError as exc:
-                                    print(f"Agent attachment validation failed: {exc}")
+                                    logger.warning("Agent attachment validation failed: %s", exc)
                             else:
-                                print("Agent attachment entry ignored due to non-dict payload")
+                                logger.debug("Agent attachment entry ignored due to non-dict payload")
                     notification_data = {
                         "id": agent_message.get("id"),
                         "role": agent_message.get("role", "assistant"),
@@ -891,10 +901,10 @@ async def send_chat_message_internal(
                         notification_data["created_at"] = notification_data["created_at"].isoformat()
                     
                     await notify_new_message(user_id, thread_id, notification_data)
-                except Exception as ws_error:
-                    print(f"WebSocket notification for agent message failed: {ws_error}")
+                except Exception:
+                    logger.exception("WebSocket notification for agent message failed for thread %s", thread_id)
                     
-    except Exception as exc:
-        print(f"Agent processing failed for thread {thread_id}: {exc}")
+    except Exception:
+        logger.exception("Agent processing failed for thread %s", thread_id)
 
     return user_message_data

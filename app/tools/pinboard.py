@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from typing import Annotated, Any, Dict, Optional, Sequence
 
 from agents import FunctionTool, RunContextWrapper, function_tool
@@ -19,6 +20,7 @@ except Exception:  # noqa: BLE001
 
 
 USER_ID_KEYS: tuple[str, ...] = ("user_id", "auth_user_id", "supabase_user_id", "id", "uid")
+logger = logging.getLogger(__name__)
 
 
 class PinboardAttachmentInput(BaseModel):
@@ -182,7 +184,7 @@ def build_create_pinboard_post_tool(*, agent_key: str) -> FunctionTool:
         try:
             await notify_pinboard_post(user_id, payload, organization_id=organization_id)
         except Exception as exc:  # pragma: no cover - notification failures shouldn't abort tool
-            print(f"[pinboard-tool] Failed to push websocket notification: {exc}")
+            logger.warning("[pinboard-tool] Failed to push websocket notification: %s", exc)
 
         return payload
 

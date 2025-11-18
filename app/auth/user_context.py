@@ -8,6 +8,7 @@ the automation suite.
 
 import os
 import json
+import logging
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
@@ -18,6 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checking helper
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,8 +121,8 @@ class UserContext:
         except ImportError:
             # Database module not available - fall back to environment/file loading
             return None
-        except Exception as e:
-            print(f"Error loading user context from database: {e}")
+        except Exception:
+            logger.exception("Error loading user context from database for auth_user_id=%s", auth_user_id)
             return None
 
 
@@ -233,7 +235,7 @@ def get_encryption_key() -> bytes:
     
     # Generate a new key (this should be saved securely in production)
     new_key = Fernet.generate_key()
-    print(f"Generated new encryption key. Set ENCRYPTION_KEY environment variable to: {new_key.decode()}")
+    logger.warning("Generated new encryption key; set ENCRYPTION_KEY env var to use it securely.")
     return new_key
 
 
@@ -258,6 +260,6 @@ def decrypt_token(encrypted_token: str) -> str:
     try:
         decrypted_token = fernet.decrypt(encrypted_token.encode())
         return decrypted_token.decode()
-    except Exception as e:
-        print(f"Failed to decrypt token: {e}")
+    except Exception:
+        logger.exception("Failed to decrypt token")
         return ""

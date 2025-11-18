@@ -1,6 +1,7 @@
 """Internal API endpoint for Celery workers to post agent results or status updates."""
 
 import re
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,8 @@ from app.core.agent_runner import resolve_user_context, apply_user_context_to_en
 from app.api.routes.websocket import notify_chat_status
 from app.api.routes import chats as chats_routes
 from app.api.schemas import ChatMessageAttachment, ChatMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -126,11 +129,11 @@ async def handle_agent_result(payload: AgentResultPayload):
                 detail=f"Unsupported task_type: {payload.task_type}"
             )
             
-    except Exception as exc:
-        print(f"Error handling agent result for job {payload.job_id}: {exc}")
+    except Exception:
+        logger.exception("Error handling agent result for job %s", payload.job_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process agent result: {str(exc)}"
+            detail="Failed to process agent result"
         )
 
 
@@ -208,7 +211,7 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
             try:
                 attachment_model = ChatMessageAttachment.model_validate(entry)
             except ValidationError as exc:
-                print(f"Invalid agent attachment skipped: {exc}")
+                logger.warning("Invalid agent attachment skipped: %s", exc)
                 continue
 
             payload_dict = attachment_model.model_dump(exclude_none=True)
@@ -266,7 +269,11 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
             agent_message_data["created_at"] = agent_message_data["created_at"].isoformat()
             
         await notify_new_message(user_context.user_id, thread_id, agent_message_data)
-        print(f"Saved and sent agent response from {payload.agent_key}: {payload.result_data[:100]}...")
+        logger.debug(
+            "Saved and sent agent response from %s (message_id=%s)",
+            payload.agent_key,
+            message_record.get("id"),
+        )
         
         # Send agent processing completed notification for Celery agents
         from app.api.routes.websocket import notify_chat_status
@@ -277,16 +284,28 @@ async def _handle_chat_result(db, payload: AgentResultPayload, user_context, org
             if status_name:
                 try:
                     await notify_chat_status(user_context.user_id, thread_id, status_name, status_data)
-                    print(f"Sent follow-up status '{status_name}' for agent {payload.agent_key}")
+                    logger.debug(
+                        "Sent follow-up status '%s' for agent %s on thread %s",
+                        status_name,
+                        payload.agent_key,
+                        thread_id,
+                    )
                 except Exception as ws_error:
-                    print(f"Failed to send follow-up status for agent {payload.agent_key}: {ws_error}")
+                    logger.warning(
+                        "Failed to send follow-up status for agent %s: %s",
+                        payload.agent_key,
+                        ws_error,
+                    )
 
         if not payload.intermediate:
             try:
                 await notify_chat_status(user_context.user_id, thread_id, "agent_processing_completed")
-                print(f"Sent agent_processing_completed notification for Celery agent {payload.agent_key}")
+                logger.debug(
+                    "Sent agent_processing_completed notification for agent %s",
+                    payload.agent_key,
+                )
             except Exception as ws_error:
-                print(f"Failed to send agent_processing_completed notification: {ws_error}")
+                logger.warning("Failed to send agent_processing_completed notification: %s", ws_error)
         
         return {
             "status": "success",
@@ -322,8 +341,8 @@ async def post_chat_status(payload: AgentStatusPayload):
     if payload.job_id:
         try:
             job_record = db.get_agent_job(payload.job_id)
-        except Exception as exc:
-            print(f"Failed to load job {payload.job_id} for status update: {exc}")
+        except Exception:
+            logger.exception("Failed to load job %s for status update", payload.job_id)
             job_record = None
 
         metadata: Dict[str, Any] | None = None
@@ -343,13 +362,13 @@ async def post_chat_status(payload: AgentStatusPayload):
                 progress=payload.progress,
                 metadata=metadata,
             )
-        except Exception as exc:
-            print(f"Failed to update job {payload.job_id} status heartbeat: {exc}")
+        except Exception:
+            logger.exception("Failed to update job %s status heartbeat", payload.job_id)
 
     try:
         await notify_chat_status(payload.user_id, payload.thread_id, payload.status, data)
     except Exception as exc:
-        print(f"Failed to deliver chat status heartbeat for thread {payload.thread_id}: {exc}")
+        logger.exception("Failed to deliver chat status heartbeat for thread %s", payload.thread_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deliver chat status: {exc}"

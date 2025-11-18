@@ -150,8 +150,8 @@ class SupabaseAuthManager:
             )
             return created is not None
 
-        except Exception as exc:
-            print(f"Error creating user profile: {exc}")
+        except Exception:
+            logger.exception("Error creating user profile for user_id=%s", user_id)
             return False
 
     def _admin_request(self, method: str, path: str, **kwargs: Any) -> Optional[requests.Response]:

@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
+import logging
 
 import httpx
 
@@ -19,6 +20,8 @@ from supabase import Client, create_client
 from ..auth import UserContext
 from ..config import CONFIG
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T")
 
 
@@ -26,6 +29,7 @@ class TransientDatabaseError(RuntimeError):
     """Raised when a transient Supabase error prevents fulfilling a request."""
 
     pass
+
 
 def _dev_mode_enabled() -> bool:
     value = os.getenv("DEVELOPMENT_MODE", "").strip().lower()
@@ -46,7 +50,7 @@ class SupabaseDatabaseClient:
             self.supabase_key = service_key
             self.using_service_role = True
             if _dev_mode_enabled():
-                print("DatabaseClient: Using service role key (development mode)")
+                logger.debug("DatabaseClient using service role key (development mode)")
         else:
             self.supabase_key = anon_key
             self.using_service_role = False
@@ -55,7 +59,7 @@ class SupabaseDatabaseClient:
             raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables are required")
 
         if service_key and not _dev_mode_enabled():
-            print("DatabaseClient: Using service role key for privileged access")
+            logger.info("DatabaseClient using service role key for privileged access")
 
         self.client: Client = create_client(self.supabase_url, self.supabase_key)
     
@@ -76,7 +80,7 @@ class SupabaseDatabaseClient:
                     }).execute()
                 except Exception as exc:
                     if "duplicate key" not in str(exc).lower():
-                        print(f"Warning: Could not create users record: {exc}")
+                        logger.warning("Could not create users record: %s", exc)
 
             profile_result = (
                 self.client
@@ -96,7 +100,7 @@ class SupabaseDatabaseClient:
                 profile = self.get_user_profile_by_auth_id(auth_user_id)
 
             if not profile:
-                print("User profile upsert failed")
+                logger.error("User profile upsert failed for auth_user_id=%s", auth_user_id)
                 return None
 
             existing_org = self.get_user_organization(auth_user_id)
@@ -126,7 +130,11 @@ class SupabaseDatabaseClient:
                 try:
                     self.ensure_organization_subscription(organization["id"], "free")
                 except Exception as subscription_exc:
-                    print(f"Warning: failed to ensure default subscription for org {organization.get('id')}: {subscription_exc}")
+                    logger.warning(
+                        "Failed to ensure default subscription for org %s: %s",
+                        organization.get("id"),
+                        subscription_exc,
+                    )
 
             return {
                 'profile': profile,
@@ -134,8 +142,8 @@ class SupabaseDatabaseClient:
                 'status': 'success' if organization else 'pending'
             }
 
-        except Exception as e:
-            print(f"Error in setup_new_user: {e}")
+        except Exception:
+            logger.exception("Error in setup_new_user for auth_user_id=%s", auth_user_id)
             return None
 
     def create_user_profile(
@@ -155,7 +163,7 @@ class SupabaseDatabaseClient:
                         }).execute()
                 except Exception as exc:
                     if "duplicate key" not in str(exc).lower():
-                        print(f"Warning: Could not create users record: {exc}")
+                        logger.warning("Could not create users record: %s", exc)
 
             result = self.client.table('user_profiles').insert({
                 'auth_user_id': auth_user_id,
@@ -164,14 +172,14 @@ class SupabaseDatabaseClient:
             profile: Optional[Dict[str, Any]] = None
             if result.data:
                 profile = result.data[0]
-                print(f"User profile created successfully: {profile['id']}")
+                logger.info("User profile created successfully: %s", profile["id"])
                 self._initialize_user_agents(auth_user_id)
                 return profile
 
             return self.get_user_profile_by_auth_id(auth_user_id)
 
-        except Exception as exc:
-            print(f"Error creating user profile: {exc}")
+        except Exception:
+            logger.exception("Error creating user profile for auth_user_id=%s", auth_user_id)
             return None
 
     def _initialize_user_agents(self, auth_user_id: str):
@@ -179,19 +187,23 @@ class SupabaseDatabaseClient:
         try:
             org = self.get_user_organization(auth_user_id)
             if not org:
-                print(f"No organization found while initializing agents for user {auth_user_id}")
+                logger.warning("No organization found while initializing agents for user %s", auth_user_id)
             else:
-                print(f"Organization {org.get('id')} already manages agents for user {auth_user_id}")
-        except Exception as exc:
-            print(f"Error verifying organization agents for user {auth_user_id}: {exc}")
+                logger.debug(
+                    "Organization %s already manages agents for user %s",
+                    org.get("id"),
+                    auth_user_id,
+                )
+        except Exception:
+            logger.exception("Error verifying organization agents for user %s", auth_user_id)
 
     def get_user_profile_by_auth_id(self, auth_user_id: str) -> Optional[Dict[str, Any]]:
         """Get user profile by auth user ID."""
         try:
             result = self.client.table('user_profiles').select('*').eq('auth_user_id', auth_user_id).execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error getting user profile: {e}")
+        except Exception:
+            logger.exception("Error getting user profile for auth_user_id=%s", auth_user_id)
             return None
 
     def get_user_context(self, auth_user_id: str) -> Optional[UserContext]:
@@ -204,8 +216,8 @@ class SupabaseDatabaseClient:
 
                 auth_manager = get_auth_manager()
                 auth_user = auth_manager.get_auth_user(auth_user_id)
-            except Exception as auth_exc:
-                print(f"Error fetching auth user for context: {auth_exc}")
+            except Exception:
+                logger.exception("Error fetching auth user for context auth_user_id=%s", auth_user_id)
                 auth_user = None
 
             email = None
@@ -233,15 +245,15 @@ class SupabaseDatabaseClient:
                 email=email,
                 timezone=timezone,
             )
-        except Exception as exc:
-            print(f"Error getting user context: {exc}")
+        except Exception:
+            logger.exception("Error getting user context for auth_user_id=%s", auth_user_id)
             return None
 
     def get_auth_user_display_name(self, auth_user_id: str) -> Optional[str]:
         try:
             response = self.client.auth.admin.get_user_by_id(auth_user_id)
-        except Exception as exc:
-            print(f"Error fetching auth user display name: {exc}")
+        except Exception:
+            logger.exception("Error fetching auth user display name for auth_user_id=%s", auth_user_id)
             return None
 
         if not response or not getattr(response, "user", None):
@@ -276,8 +288,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return bool(result.data)
-        except Exception as exc:
-            print(f"Error updating user profile: {exc}")
+        except Exception:
+            logger.exception("Error updating user profile for auth_user_id=%s", auth_user_id)
             return False
 
     # Legacy agent-specific methods (hire/fire/toggle) have been removed. Agents are
@@ -295,7 +307,7 @@ class SupabaseDatabaseClient:
         try:
             profile = self.get_user_profile_by_auth_id(auth_user_id)
             if not profile:
-                print(f"No user profile found for {auth_user_id} when updating run state")
+                logger.warning("No user profile found for %s when updating run state", auth_user_id)
                 return False
 
             table_name = 'user_run_state'
@@ -326,8 +338,8 @@ class SupabaseDatabaseClient:
                     },
                 )
             return bool(result.data)
-        except Exception as e:
-            print(f"Error updating run state: {e}")
+        except Exception:
+            logger.exception("Error updating run state for auth_user_id=%s", auth_user_id)
             return False
 
     def get_run_state(self, auth_user_id: str, process_type: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -348,9 +360,9 @@ class SupabaseDatabaseClient:
                 query = query.eq('process_type', process_type)
             result = query.order('created_at', desc=True).execute()
             return result.data or []
-        except Exception as e:
+        except Exception:
             # If table doesn't exist, return empty list
-            print(f"Error getting run state: {e}")
+            logger.exception("Error getting run state for auth_user_id=%s", auth_user_id)
             return []
 
     def log_user_activity(
@@ -378,8 +390,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return bool(result.data)
-        except Exception as e:
-            print(f"Error logging user activity: {e}")
+        except Exception:
+            logger.exception("Error logging user activity for auth_user_id=%s", auth_user_id)
             return False
 
     def get_user_activity(self, auth_user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -399,8 +411,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data or []
-        except Exception as e:
-            print(f"Error getting user activity: {e}")
+        except Exception:
+            logger.exception("Error getting user activity for auth_user_id=%s", auth_user_id)
             # Return empty list if table doesn't exist or other database error
             return []
 
@@ -419,8 +431,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return response.data[0] if response.data else None
-        except Exception as exc:
-            print(f"Error loading user settings record for user {internal_user_id}: {exc}")
+        except Exception:
+            logger.exception("Error loading user settings record for user %s", internal_user_id)
             return None
 
     def upsert_user_settings_record(
@@ -465,13 +477,14 @@ class SupabaseDatabaseClient:
                 try:
                     return _perform_upsert(trimmed_payload)
                 except Exception as inner_exc:
-                    print(
-                        "Error upserting user settings without agent_settings column "
-                        f"for user {internal_user_id}: {inner_exc}"
+                    logger.exception(
+                        "Error upserting user settings without agent_settings column for user %s: %s",
+                        internal_user_id,
+                        inner_exc,
                     )
                     return False
 
-            print(f"Error upserting user settings for user {internal_user_id}: {exc}")
+            logger.exception("Error upserting user settings for user %s", internal_user_id)
             return False
 
     def get_user_settings(self, auth_user_id: str) -> Dict[str, Any]:
@@ -494,8 +507,8 @@ class SupabaseDatabaseClient:
                 if "setting_key" in setting and "setting_value" in setting:
                     settings[setting["setting_key"]] = setting["setting_value"]
             return settings
-        except Exception as exc:
-            print(f"Error getting user settings: {exc}")
+        except Exception:
+            logger.exception("Error getting user settings for auth_user_id=%s", auth_user_id)
             return {}
 
     # Organization-aware methods for multi-user SaaS
@@ -504,8 +517,8 @@ class SupabaseDatabaseClient:
         try:
             result = self.client.rpc('get_user_primary_organization', {'p_user_id': auth_user_id}).execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error getting user organization: {e}")
+        except Exception:
+            logger.exception("Error getting user organization for auth_user_id=%s", auth_user_id)
             return None
 
     def delete_user_account(self, auth_user_id: str) -> bool:
@@ -570,8 +583,8 @@ class SupabaseDatabaseClient:
             )
 
             return True
-        except Exception as exc:
-            print(f"Error deleting account for {auth_user_id}: {exc}")
+        except Exception:
+            logger.exception("Error deleting account for auth_user_id=%s", auth_user_id)
             return False
 
     def _choose_organization_replacement(
@@ -587,10 +600,8 @@ class SupabaseDatabaseClient:
                 .eq("is_active", True)
                 .execute()
             )
-        except Exception as exc:
-            print(
-                f"Error fetching organization members for {organization_id}: {exc}"
-            )
+        except Exception:
+            logger.exception("Error fetching organization members for %s", organization_id)
             return None
 
         candidates: List[Dict[str, Any]] = []
@@ -671,8 +682,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error fetching billing plan {plan_key}: {exc}")
+        except Exception:
+            logger.exception("Error fetching billing plan %s", plan_key)
             return None
 
     def list_billing_plans(self, *, include_inactive: bool = False) -> List[Dict[str, Any]]:
@@ -682,8 +693,8 @@ class SupabaseDatabaseClient:
                 query = query.eq("is_active", True)
             result = query.execute()
             return result.data or []
-        except Exception as exc:
-            print(f"Error listing billing plans: {exc}")
+        except Exception:
+            logger.exception("Error listing billing plans")
             return []
 
     def ensure_organization_subscription(self, organization_id: str, default_plan_key: str) -> Dict[str, Any]:
@@ -723,8 +734,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error fetching subscription for organization {organization_id}: {exc}")
+        except Exception:
+            logger.exception("Error fetching subscription for organization %s", organization_id)
             return None
 
     def update_organization_subscription(self, organization_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -738,8 +749,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error updating subscription for organization {organization_id}: {exc}")
+        except Exception:
+            logger.exception("Error updating subscription for organization %s", organization_id)
             return None
 
     def get_subscription_by_customer_id(self, customer_id: str) -> Optional[Dict[str, Any]]:
@@ -754,8 +765,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error fetching subscription by customer {customer_id}: {exc}")
+        except Exception:
+            logger.exception("Error fetching subscription by customer %s", customer_id)
             return None
 
     def get_subscription_by_subscription_id(self, subscription_id: str) -> Optional[Dict[str, Any]]:
@@ -770,8 +781,11 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error fetching subscription by subscription id {subscription_id}: {exc}")
+        except Exception:
+            logger.exception(
+                "Error fetching subscription by subscription id %s",
+                subscription_id,
+            )
             return None
 
     def has_subscription_event(self, stripe_event_id: str) -> bool:
@@ -786,8 +800,8 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return bool(result and result.data)
-        except Exception as exc:
-            print(f"Error checking subscription event {stripe_event_id}: {exc}")
+        except Exception:
+            logger.exception("Error checking subscription event %s", stripe_event_id)
             return False
 
     def record_subscription_event(
@@ -812,8 +826,8 @@ class SupabaseDatabaseClient:
                 .upsert(body, on_conflict="stripe_event_id")
                 .execute()
             )
-        except Exception as exc:
-            print(f"Error recording subscription event {stripe_event_id}: {exc}")
+        except Exception:
+            logger.exception("Error recording subscription event %s", stripe_event_id)
 
     def get_organization_membership(self, auth_user_id: str, organization_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -826,8 +840,12 @@ class SupabaseDatabaseClient:
                 .execute()
             )
             return result.data[0] if result and result.data else None
-        except Exception as exc:
-            print(f"Error fetching membership for user {auth_user_id} in org {organization_id}: {exc}")
+        except Exception:
+            logger.exception(
+                "Error fetching membership for user %s in org %s",
+                auth_user_id,
+                organization_id,
+            )
             return None
 
     def record_usage_event(
@@ -841,7 +859,7 @@ class SupabaseDatabaseClient:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not user_id:
-            print(f"Skipping usage event for org {organization_id}: user_id is required")
+            logger.debug("Skipping usage event for org %s: user_id is required", organization_id)
             return
         payload = {
             "organization_id": organization_id,
@@ -853,8 +871,8 @@ class SupabaseDatabaseClient:
         }
         try:
             self.client.table("usage_logs").insert(payload).execute()
-        except Exception as exc:
-            print(f"Error recording usage event for org {organization_id}: {exc}")
+        except Exception:
+            logger.exception("Error recording usage event for org %s", organization_id)
 
     def get_usage_totals(
         self,
@@ -874,8 +892,8 @@ class SupabaseDatabaseClient:
             if end:
                 query = query.lt("created_at", end.isoformat())
             result = query.execute()
-        except Exception as exc:
-            print(f"Error aggregating usage for org {organization_id}: {exc}")
+        except Exception:
+            logger.exception("Error aggregating usage for org %s", organization_id)
             return {"actions": 0, "tokens": 0}
 
         totals = {"actions": 0, "tokens": 0}
@@ -936,6 +954,31 @@ class SupabaseDatabaseClient:
         return data
 
     @staticmethod
+    def _normalize_chat_usage_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(record)
+        numeric_fields = (
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "total_tokens",
+        )
+        for field in numeric_fields:
+            value = data.get(field)
+            if value is None:
+                data[field] = 0
+                continue
+            if isinstance(value, (int, float)):
+                data[field] = int(value)
+            elif isinstance(value, str):
+                try:
+                    data[field] = int(float(value))
+                except ValueError:
+                    data[field] = 0
+            else:
+                data[field] = 0
+        return data
+
+    @staticmethod
     def _normalize_pinboard_record(record: Dict[str, Any]) -> Dict[str, Any]:
         data = dict(record)
         attachments_raw = data.get("attachments") or []
@@ -975,8 +1018,8 @@ class SupabaseDatabaseClient:
                 query = query.eq("organization_id", organization_id)
             result = query.execute()
             return [self._normalize_chat_thread_record(row) for row in (result.data or [])]
-        except Exception as exc:
-            print(f"Error listing chat threads: {exc}")
+        except Exception:
+            logger.exception("Error listing chat threads for auth_user_id=%s", auth_user_id)
             return []
 
     def get_chat_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -997,8 +1040,8 @@ class SupabaseDatabaseClient:
             return self._execute_with_retry(_query, f"fetch chat thread {thread_id}")
         except TransientDatabaseError:
             raise
-        except Exception as exc:
-            print(f"Error fetching chat thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error fetching chat thread %s", thread_id)
             return None
 
     def create_chat_thread(
@@ -1026,8 +1069,8 @@ class SupabaseDatabaseClient:
             if not result.data:
                 return None
             return self._normalize_chat_thread_record(result.data[0])
-        except Exception as exc:
-            print(f"Error creating chat thread: {exc}")
+        except Exception:
+            logger.exception("Error creating chat thread for auth_user_id=%s", auth_user_id)
             return None
 
     def update_chat_thread(
@@ -1046,8 +1089,8 @@ class SupabaseDatabaseClient:
             if not result.data:
                 return None
             return self._normalize_chat_thread_record(result.data[0])
-        except Exception as exc:
-            print(f"Error updating chat thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error updating chat thread %s", thread_id)
             return None
 
     def touch_chat_thread(self, thread_id: str) -> bool:
@@ -1056,8 +1099,8 @@ class SupabaseDatabaseClient:
             timestamp = datetime.now(timezone.utc).isoformat()
             self.client.table("chat_threads").update({"updated_at": timestamp}).eq("id", thread_id).execute()
             return True
-        except Exception as exc:
-            print(f"Error touching chat thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error touching chat thread %s", thread_id)
             return False
 
     def delete_chat_thread(self, thread_id: str, auth_user_id: str) -> bool:
@@ -1077,8 +1120,8 @@ class SupabaseDatabaseClient:
                 # Supabase returns None when returning="minimal"; assume success
                 return True
             return len(data) > 0
-        except Exception as exc:
-            print(f"Error deleting chat thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error deleting chat thread %s", thread_id)
             return False
 
     def clear_chat_messages(self, thread_id: str, auth_user_id: str) -> bool:
@@ -1101,8 +1144,8 @@ class SupabaseDatabaseClient:
             self.touch_chat_thread(thread_id)
             
             return True
-        except Exception as exc:
-            print(f"Error clearing chat messages for thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error clearing chat messages for thread %s", thread_id)
             return False
 
     def list_chat_messages(
@@ -1137,8 +1180,8 @@ class SupabaseDatabaseClient:
             )
         except TransientDatabaseError:
             raise
-        except Exception as exc:
-            print(f"Error listing chat messages for thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error listing chat messages for thread %s", thread_id)
             return []
 
     def insert_chat_message(
@@ -1172,12 +1215,132 @@ class SupabaseDatabaseClient:
             if not result.data:
                 return None
             return self._normalize_chat_message_record(result.data[0])
-        except Exception as exc:
-            print(f"Error inserting chat message for thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error inserting chat message for thread %s", thread_id)
             return None
+
+    def insert_chat_usage(
+        self,
+        *,
+        thread_id: str,
+        message_id: Optional[str],
+        user_id: str,
+        session_id: Optional[str],
+        agent_key: Optional[str],
+        model: Optional[str],
+        job_id: Optional[str],
+        input_tokens: int,
+        cached_input_tokens: int,
+        output_tokens: int,
+        total_tokens: int,
+        context_fill: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        entry: Dict[str, Any] = {
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "input_tokens": max(0, int(input_tokens or 0)),
+            "cached_input_tokens": max(0, int(cached_input_tokens or 0)),
+            "output_tokens": max(0, int(output_tokens or 0)),
+            "total_tokens": max(0, int(total_tokens or 0)),
+        }
+        if message_id:
+            entry["message_id"] = message_id
+        if session_id:
+            entry["session_id"] = session_id
+        if agent_key:
+            entry["agent_key"] = agent_key
+        if model:
+            entry["model"] = model
+        if job_id:
+            entry["job_id"] = job_id
+        if context_fill is not None:
+            entry["context_fill"] = context_fill
+
+        try:
+            result = self.client.table("chat_usage").insert(entry).execute()
+            if not result.data:
+                return None
+            return self._normalize_chat_usage_record(result.data[0])
+        except Exception:
+            logger.exception("Error recording chat usage for thread %s", thread_id)
+            return None
+
+    def list_chat_usage(
+        self,
+        *,
+        thread_id: str,
+        session_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        try:
+            query = (
+                self.client.table("chat_usage")
+                .select("*")
+                .eq("thread_id", thread_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+            if session_id:
+                query = query.eq("session_id", session_id)
+            result = query.execute()
+            records = result.data or []
+            return [self._normalize_chat_usage_record(row) for row in records]
+        except Exception:
+            logger.exception("Error listing chat usage for thread %s", thread_id)
+            return []
+
+    def get_chat_usage_totals(
+        self,
+        *,
+        thread_id: str,
+        session_id: Optional[str] = None,
+        max_rows: int = 5000,
+        page_size: int = 500,
+    ) -> Dict[str, int]:
+        totals = {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+        try:
+            start = 0
+            while start < max_rows:
+                end = start + page_size - 1
+                query = (
+                    self.client.table("chat_usage")
+                    .select(
+                        "input_tokens,cached_input_tokens,output_tokens,total_tokens"
+                    )
+                    .eq("thread_id", thread_id)
+                    .order("created_at", desc=False)
+                    .range(start, end)
+                )
+                if session_id:
+                    query = query.eq("session_id", session_id)
+                result = query.execute()
+                rows = result.data or []
+                for row in rows:
+                    normalized = self._normalize_chat_usage_record(row)
+                    totals["input_tokens"] += normalized["input_tokens"]
+                    totals["cached_input_tokens"] += normalized["cached_input_tokens"]
+                    totals["output_tokens"] += normalized["output_tokens"]
+                    totals["total_tokens"] += normalized["total_tokens"]
+
+                if len(rows) < page_size:
+                    break
+
+                start += page_size
+
+            return totals
+        except Exception:
+            logger.exception("Error aggregating chat usage for thread %s", thread_id)
+            return totals
 
     @staticmethod
     def _is_transient_supabase_error(exc: Exception) -> bool:
+        """Best-effort detection of transient Supabase/httpx failures."""
         transient_markers = (
             "Server disconnected",
             "Connection reset",
@@ -1210,6 +1373,7 @@ class SupabaseDatabaseClient:
         retries: int = 2,
         initial_delay: float = 0.2,
     ) -> T:
+        """Run a Supabase operation with limited retries for transient errors."""
         attempt = 0
         delay = initial_delay
         last_exc: Optional[Exception] = None
@@ -1222,8 +1386,12 @@ class SupabaseDatabaseClient:
                     raise TransientDatabaseError(
                         f"Transient error while attempting to {description}"
                     ) from exc
-                print(
-                    f"Transient Supabase error ({description}) attempt {attempt + 1}/{retries + 1}: {exc}"
+                logger.warning(
+                    "Transient Supabase error (%s) attempt %s/%s: %s",
+                    description,
+                    attempt + 1,
+                    retries + 1,
+                    exc,
                 )
                 last_exc = exc
                 time.sleep(delay)
@@ -1250,8 +1418,8 @@ class SupabaseDatabaseClient:
                 query = query.eq("user_id", user_id)
             result = query.execute()
             return [self._normalize_pinboard_record(row) for row in (result.data or [])]
-        except Exception as exc:
-            print(f"Error listing pinboard posts: {exc}")
+        except Exception:
+            logger.exception("Error listing pinboard posts")
             return []
 
     def get_pinboard_post_by_slug(
@@ -1274,8 +1442,8 @@ class SupabaseDatabaseClient:
             if not result.data:
                 return None
             return self._normalize_pinboard_record(result.data[0])
-        except Exception as exc:
-            print(f"Error fetching pinboard post ({slug}): {exc}")
+        except Exception:
+            logger.exception("Error fetching pinboard post (%s)", slug)
             return None
 
     def create_pinboard_post(
@@ -1317,8 +1485,8 @@ class SupabaseDatabaseClient:
             if not result.data:
                 return None
             return self._normalize_pinboard_record(result.data[0])
-        except Exception as exc:
-            print(f"Error creating pinboard post: {exc}")
+        except Exception:
+            logger.exception("Error creating pinboard post")
             return None
 
     def delete_pinboard_post(
@@ -1341,8 +1509,8 @@ class SupabaseDatabaseClient:
             if data is None:
                 return True
             return len(data) > 0
-        except Exception as exc:
-            print(f"Error deleting pinboard post {post_id}: {exc}")
+        except Exception:
+            logger.exception("Error deleting pinboard post %s", post_id)
             return False
 
     def get_organization_agents(self, org_id: str) -> List[Dict[str, Any]]:
@@ -1350,8 +1518,8 @@ class SupabaseDatabaseClient:
         try:
             result = self.client.table('agents').select('*').eq('organization_id', org_id).eq('is_active', True).execute()
             return result.data or []
-        except Exception as e:
-            print(f"Error getting organization agents: {e}")
+        except Exception:
+            logger.exception("Error getting organization agents for org_id=%s", org_id)
             return []
 
     def add_agent_to_organization(self, org_id: str, agent_key: str, agent_data: Dict[str, Any], created_by: str) -> bool:
@@ -1383,8 +1551,8 @@ class SupabaseDatabaseClient:
             }).execute()
             
             return result.data is not None
-        except Exception as e:
-            print(f"Error adding agent to organization: {e}")
+        except Exception:
+            logger.exception("Error adding agent %s to organization %s", agent_key, org_id)
             return False
 
     def remove_agent_from_organization(self, org_id: str, agent_key: str) -> bool:
@@ -1396,8 +1564,8 @@ class SupabaseDatabaseClient:
             }).eq('organization_id', org_id).eq('key', agent_key).execute()
             
             return result.data is not None
-        except Exception as e:
-            print(f"Error removing agent from organization: {e}")
+        except Exception:
+            logger.exception("Error removing agent %s from organization %s", agent_key, org_id)
             return False
 
     def get_agent_by_key(self, org_id: str, agent_key: str) -> Optional[Dict[str, Any]]:
@@ -1405,8 +1573,8 @@ class SupabaseDatabaseClient:
         try:
             result = self.client.table('agents').select('*').eq('organization_id', org_id).eq('key', agent_key).eq('is_active', True).execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error getting agent by key: {e}")
+        except Exception:
+            logger.exception("Error getting agent %s for organization %s", agent_key, org_id)
             return None
 
     def upsert_agent_catalog_agent(self, payload: Dict[str, Any]) -> bool:
@@ -1415,8 +1583,8 @@ class SupabaseDatabaseClient:
         try:
             self.client.table("agent_catalog_agents").upsert(payload, on_conflict="key").execute()
             return True
-        except Exception as exc:
-            print(f"Error upserting agent catalog agent {payload.get('key')}: {exc}")
+        except Exception:
+            logger.exception("Error upserting agent catalog agent %s", payload.get("key"))
             return False
 
     def upsert_agent_catalog_version(self, payload: Dict[str, Any]) -> bool:
@@ -1425,9 +1593,11 @@ class SupabaseDatabaseClient:
         try:
             self.client.table("agent_catalog_versions").upsert(payload, on_conflict="agent_key,version").execute()
             return True
-        except Exception as exc:
-            print(
-                f"Error upserting agent catalog version {payload.get('agent_key')}@{payload.get('version')}: {exc}"
+        except Exception:
+            logger.exception(
+                "Error upserting agent catalog version %s@%s",
+                payload.get("agent_key"),
+                payload.get("version"),
             )
             return False
 
@@ -1451,8 +1621,8 @@ class SupabaseDatabaseClient:
                 .order("published_at", desc=True)
             )
             result = query.execute()
-        except Exception as exc:
-            print(f"Error fetching agent catalog: {exc}")
+        except Exception:
+            logger.exception("Error fetching agent catalog")
             return []
 
         # Group by agent_key to get the latest published version for each agent
@@ -1548,8 +1718,8 @@ class SupabaseDatabaseClient:
                 'p_created_by': task_data.get('created_by')
             }).execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating task: {e}")
+        except Exception:
+            logger.exception("Error creating task for org_id=%s", org_id)
             return None
 
     def get_organization_tasks(self, org_id: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -1567,8 +1737,8 @@ class SupabaseDatabaseClient:
             
             result = query.order('created_at', desc=True).execute()
             return result.data or []
-        except Exception as e:
-            print(f"Error getting organization tasks: {e}")
+        except Exception:
+            logger.exception("Error getting organization tasks for org_id=%s", org_id)
             return []
 
     def log_run_start(self, org_id: str, task_id: Optional[str], agent_id: Optional[str], 
@@ -1583,8 +1753,8 @@ class SupabaseDatabaseClient:
                 'p_created_by': user_id
             }).execute()
             return result.data if result.data else None
-        except Exception as e:
-            print(f"Error logging run start: {e}")
+        except Exception:
+            logger.exception("Error logging run start for org_id=%s", org_id)
             return None
 
     def log_run_complete(self, run_id: str, result: Dict[str, Any]) -> bool:
@@ -1600,8 +1770,8 @@ class SupabaseDatabaseClient:
                 'p_cost_usd': result.get('cost')
             }).execute()
             return True
-        except Exception as e:
-            print(f"Error logging run completion: {e}")
+        except Exception:
+            logger.exception("Error logging run completion for run_id=%s", run_id)
             return False
 
     def get_organization_runs(self, org_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -1609,8 +1779,8 @@ class SupabaseDatabaseClient:
         try:
             result = self.client.table('runs').select('*').eq('organization_id', org_id).order('created_at', desc=True).limit(limit).execute()
             return result.data or []
-        except Exception as e:
-            print(f"Error getting organization runs: {e}")
+        except Exception:
+            logger.exception("Error getting organization runs for org_id=%s", org_id)
             return []
 
     # ------------------------------------------------------------------
@@ -1662,8 +1832,8 @@ class SupabaseDatabaseClient:
             )
             if result and result.data:
                 return self._normalize_job_record(result.data[0])
-        except Exception as exc:
-            print(f"Error creating agent job for {auth_user_id}: {exc}")
+        except Exception:
+            logger.exception("Error creating agent job for auth_user_id=%s", auth_user_id)
 
         return self._normalize_job_record(record) or record
 
@@ -1701,8 +1871,8 @@ class SupabaseDatabaseClient:
 
         try:
             self.client.table("agent_jobs").update(updates).eq("id", job_id).execute()
-        except Exception as exc:
-            print(f"Error updating agent job {job_id}: {exc}")
+        except Exception:
+            logger.exception("Error updating agent job %s", job_id)
             return None
 
         return self.get_agent_job(job_id)
@@ -1720,8 +1890,8 @@ class SupabaseDatabaseClient:
             result = query.execute()
             if result and result.data:
                 return self._normalize_job_record(result.data[0])
-        except Exception as exc:
-            print(f"Error fetching agent job {job_id}: {exc}")
+        except Exception:
+            logger.exception("Error fetching agent job %s", job_id)
         return None
 
     def list_agent_jobs(self, auth_user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -1736,8 +1906,8 @@ class SupabaseDatabaseClient:
             )
             rows = result.data or []
             return [self._normalize_job_record(row) for row in rows]
-        except Exception as exc:
-            print(f"Error listing agent jobs for {auth_user_id}: {exc}")
+        except Exception:
+            logger.exception("Error listing agent jobs for auth_user_id=%s", auth_user_id)
             return []
 
     def get_active_agent_job_for_thread(
@@ -1763,8 +1933,8 @@ class SupabaseDatabaseClient:
 
             result = query.execute()
             rows = result.data or []
-        except Exception as exc:
-            print(f"Error fetching active job for thread {thread_id}: {exc}")
+        except Exception:
+            logger.exception("Error fetching active job for thread %s", thread_id)
             return None
 
         for row in rows:
@@ -1801,8 +1971,8 @@ def initialize_database():
     """Initialize database connection and verify setup."""
     try:
         client = get_database_client()
-        print("Database client initialized successfully")
+        logger.info("Database client initialized successfully")
         return True
-    except Exception as e:
-        print(f"Failed to initialize database: {e}")
+    except Exception:
+        logger.exception("Failed to initialize database")
         return False

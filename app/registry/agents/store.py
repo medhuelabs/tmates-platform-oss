@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List, Optional
+import logging
 
 from app.config import CONFIG
 from app.db import get_database_client
 
 from .models import AgentDefinition
 from .repository import AgentRepository
+
+logger = logging.getLogger(__name__)
 
 
 class AgentStore:
@@ -38,8 +41,8 @@ class AgentStore:
         environment = getattr(CONFIG, "agent_catalog_environment", "prod")
         try:
             entries = db.list_agent_catalog_agents(environment=environment)
-        except Exception as exc:
-            print(f"AgentStore: failed to load catalog agents: {exc}")
+        except Exception:
+            logger.exception("AgentStore failed to load catalog agents")
             self._catalog_cache = {}
             return self._catalog_cache
 

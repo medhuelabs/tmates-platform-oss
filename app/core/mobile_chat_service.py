@@ -6,8 +6,11 @@ and architectural conflicts of the web-oriented ChatManager system.
 """
 
 from typing import List, Dict, Any, Optional
+import logging
 from app.db import TransientDatabaseError, get_database_client
 from app.auth import UserContext
+
+logger = logging.getLogger(__name__)
 
 
 class MobileChatService:
@@ -107,7 +110,7 @@ class MobileChatService:
         try:
             thread = self.db.get_chat_thread(thread_id)
         except TransientDatabaseError as exc:
-            print(f"MobileChatService: transient error fetching thread {thread_id}: {exc}")
+            logger.warning("Transient error fetching thread %s: %s", thread_id, exc)
             return False
         if not thread:
             return False

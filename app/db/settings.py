@@ -11,9 +11,12 @@ from __future__ import annotations
 import os
 import json
 import importlib
+import logging
 from typing import Any, Dict, Optional, Tuple
 from .client import get_database_client
 from app.logger import log
+
+logger = logging.getLogger(__name__)
 
 MOBILE_SETTINGS_KEY = "mobile_preferences"
 
@@ -38,8 +41,8 @@ def _safe_log(*parts: Any, verbose: bool = False) -> None:
     try:
         log(message, agent="system", feed=False)
     except Exception:
-        # Fallback to direct stdout if logging helpers are unavailable.
-        print(message, flush=True)
+        # Fallback to standard logging if helper is unavailable.
+        logger.info(message)
 
 
 def _deserialize_settings(value: Any) -> Dict[str, Any]:

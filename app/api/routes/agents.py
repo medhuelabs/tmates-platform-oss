@@ -1,5 +1,6 @@
 import json
 from typing import List, Dict, Any, Optional
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -8,6 +9,8 @@ from app.db.client import get_database_client
 from app.registry.agents.store import AgentStore
 from app.config import CONFIG
 from app.billing import BillingManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _agent_store = AgentStore()
@@ -39,8 +42,8 @@ def _ensure_team_chat_thread(db, user_id: str, organization_id: str) -> Optional
             organization_id=organization_id,
             limit=200,
         )
-    except Exception as exc:
-        print(f"Failed to list threads when ensuring team chat: {exc}")
+    except Exception:
+        logger.exception("Failed to list threads when ensuring team chat for user %s", user_id)
         threads = []
 
     for thread in threads or []:
@@ -64,10 +67,10 @@ def _ensure_team_chat_thread(db, user_id: str, organization_id: str) -> Optional
             },
         )
         if thread:
-            print(f"Created team chat thread {thread.get('id')} for user {user_id}")
+            logger.info("Created team chat thread %s for user %s", thread.get("id"), user_id)
         return thread
-    except Exception as exc:
-        print(f"Failed to create team chat thread: {exc}")
+    except Exception:
+        logger.exception("Failed to create team chat thread for user %s", user_id)
         return None
 
 
@@ -103,8 +106,8 @@ def _sync_team_chat_agents(
         else:
             thread.update(updates)
         return True
-    except Exception as exc:
-        print(f"Failed to sync team chat agents: {exc}")
+    except Exception:
+        logger.exception("Failed to sync team chat agents for thread %s", thread.get("id"))
         return False
 
 
@@ -137,13 +140,13 @@ def _post_team_chat_event(
             organization_id=organization_id,
             user_id=user_id,
         )
-    except Exception as exc:
-        print(f"Failed to post team chat event message: {exc}")
+    except Exception:
+        logger.exception("Failed to post team chat event message for thread %s", thread_id)
 
     try:
         db.touch_chat_thread(thread_id)
-    except Exception as exc:
-        print(f"Failed to touch team chat thread {thread_id}: {exc}")
+    except Exception:
+        logger.exception("Failed to touch team chat thread %s", thread_id)
 
 
 @router.get("/agents/store", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
@@ -229,8 +232,8 @@ def get_agent_store(user_id: str = Depends(get_current_user_id)) -> Dict[str, An
                         "icon": agent.icon or "🤖",
                         "hired": agent.key in org_agent_keys,
                     })
-            except Exception as e:
-                print(f"Error loading agents from store: {e}")
+            except Exception:
+                logger.exception("Error loading agents from store for organization %s", org.get("id"))
                 return {
                     "available_agents": [],
                     "hired_count": len(org_agent_keys),
@@ -249,8 +252,8 @@ def get_agent_store(user_id: str = Depends(get_current_user_id)) -> Dict[str, An
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Agent store error: {e}")
+    except Exception:
+        logger.exception("Agent store error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to load agent store"
@@ -299,30 +302,61 @@ def manage_organization_agent(
         
         try:
             org_agents_existing = db.get_organization_agents(org['id']) or []
-        except Exception as agent_list_exc:
-            print(f"Failed to load organization agents for {org['id']}: {agent_list_exc}")
+        except Exception:
+            logger.exception("Failed to load organization agents for %s", org["id"])
             org_agents_existing = []
 
-        # Verify agent exists either in the store (current definition) or organization records
+        # Verify agent exists either in the store (current definition) or via catalog entry
         agent = _agent_store.get_agent(agent_key)
         org_agent_record: Optional[Dict[str, Any]] = None
+        catalog_entry: Optional[Dict[str, Any]] = None
         if not agent:
             try:
                 org_agent_record = db.get_agent_by_key(org['id'], agent_key)
-            except Exception as lookup_exc:
-                print(f"Failed to lookup agent {agent_key} in organization {org['id']}: {lookup_exc}")
+            except Exception:
+                logger.exception("Failed to lookup agent %s in organization %s", agent_key, org["id"])
+            if getattr(CONFIG, "agent_catalog_enabled", False):
+                try:
+                    catalog_entry = db.get_agent_catalog_entry(
+                        agent_key=agent_key,
+                        environment=getattr(CONFIG, "agent_catalog_environment", "prod"),
+                        organization_id=org.get("id"),
+                    )
+                except Exception:
+                    logger.exception("Failed to load catalog entry for %s", agent_key)
 
-        if action == "add" and not agent:
+        if action == "add" and not agent and not catalog_entry:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent '{agent_key}' not found"
             )
 
-        if action == "remove" and not agent and not org_agent_record:
+        if action == "remove" and not agent and not catalog_entry and not org_agent_record:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent '{agent_key}' not found"
             )
+
+        catalog_manifest: Dict[str, Any] = {}
+        if isinstance(catalog_entry, dict):
+            manifest_candidate = catalog_entry.get("manifest")
+            if isinstance(manifest_candidate, dict):
+                catalog_manifest = manifest_candidate
+        org_record_data = org_agent_record if isinstance(org_agent_record, dict) else {}
+
+        agent_name = (
+            getattr(agent, "name", None)
+            or (catalog_entry.get("name") if catalog_entry else None)
+            or org_record_data.get("name")
+            or agent_key.title()
+        )
+        agent_description = (
+            getattr(agent, "description", None)
+            or (catalog_entry.get("description") if catalog_entry else None)
+            or org_record_data.get("description")
+            or catalog_manifest.get("description")
+            or f"{agent_name} assistant"
+        )
         
         if action == "add":
             billing_manager = BillingManager(db)
@@ -333,8 +367,8 @@ def manage_organization_agent(
                         org['id'],
                         active_agents=len(org_agents_existing),
                     )
-                except Exception as plan_exc:
-                    print(f"Failed to resolve billing plan for org {org['id']}: {plan_exc}")
+                except Exception:
+                    logger.exception("Failed to resolve billing plan for org %s", org["id"])
                 if plan_context is not None:
                     limit_error = billing_manager.agent_limit_error(
                         plan_context,
@@ -348,8 +382,8 @@ def manage_organization_agent(
 
             # Add agent to organization
             agent_data = {
-                'name': agent.name,
-                'description': agent.description,
+                'name': agent_name,
+                'description': agent_description,
                 'agent_type': 'assistant',
                 'config': {}
             }
@@ -362,11 +396,17 @@ def manage_organization_agent(
                         organization_id=org['id'],
                         limit=200,
                     )
-                except Exception as list_error:
+                except Exception:
                     potential_threads = []
-                    print(f"Failed to list chat threads for agent {agent_key}: {list_error}")
+                    logger.exception("Failed to list chat threads for agent %s", agent_key)
 
                 for thread in potential_threads or []:
+                    metadata = thread.get("metadata") or {}
+                    slug = str(metadata.get("slug") or "").strip().lower()
+                    kind = str(thread.get("kind") or "").strip().lower()
+                    if slug == TEAM_CHAT_SLUG or kind == TEAM_CHAT_KIND:
+                        continue  # Never reuse the shared Team Chat thread for individual agents
+
                     thread_agent_keys = _normalize_agent_keys(thread.get("agent_keys"))
                     if len(thread_agent_keys) == 1 and thread_agent_keys[0] == agent_key:
                         if existing_thread is None:
@@ -377,8 +417,8 @@ def manage_organization_agent(
                     if not isinstance(metadata, dict):
                         metadata = {}
                     metadata.update({
-                        'agent_name': agent.name,
-                        'agent_description': agent.description,
+                        'agent_name': agent_name,
+                        'agent_description': agent_description,
                         'agent_key': agent_key,
                     })
                     metadata.setdefault('created_via', 'agent_addition')
@@ -398,36 +438,36 @@ def manage_organization_agent(
                         updated_thread = db.update_chat_thread(existing_thread.get("id"), updates)
                         if updated_thread:
                             existing_thread = updated_thread
-                        print(f"Reused chat thread {existing_thread.get('id')} for agent {agent_key}")
-                    except Exception as update_error:
-                        print(f"Failed to update chat thread {existing_thread.get('id')} for agent {agent_key}: {update_error}")
+                        logger.debug("Reused chat thread %s for agent %s", existing_thread.get("id"), agent_key)
+                    except Exception:
+                        logger.exception("Failed to update chat thread %s for agent %s", existing_thread.get("id"), agent_key)
 
                     try:
                         db.touch_chat_thread(existing_thread.get("id"))
-                    except Exception as touch_error:
-                        print(f"Failed to touch chat thread {existing_thread.get('id')} for agent {agent_key}: {touch_error}")
+                    except Exception:
+                        logger.exception("Failed to touch chat thread %s for agent %s", existing_thread.get("id"), agent_key)
                 else:
                     try:
                         thread = db.create_chat_thread(
                             auth_user_id=user_id,
                             organization_id=org['id'],
-                            title=agent.name,
+                            title=agent_name,
                             kind="agent",
                             agent_keys=[agent_key],
                             metadata={
-                                'agent_name': agent.name,
-                                'agent_description': agent.description,
+                                'agent_name': agent_name,
+                                'agent_description': agent_description,
                                 'agent_key': agent_key,
                                 'created_via': 'agent_addition'
                             }
                         )
                         if thread:
                             existing_thread = thread
-                            print(f"Created chat thread {thread.get('id')} for agent {agent_key}")
+                            logger.info("Created chat thread %s for agent %s", thread.get("id"), agent_key)
                         else:
-                            print(f"Failed to create chat thread for agent {agent_key}: No thread returned")
-                    except Exception as create_error:
-                        print(f"Failed to create chat thread for agent {agent_key}: {create_error}")
+                            logger.warning("Failed to create chat thread for agent %s: no thread returned", agent_key)
+                    except Exception:
+                        logger.exception("Failed to create chat thread for agent %s", agent_key)
                         # Don't fail the entire operation if chat thread creation fails
                 
                 try:
@@ -449,34 +489,29 @@ def manage_organization_agent(
                                 organization_id=org['id'],
                                 user_id=user_id,
                                 agent_key=agent_key,
-                                agent_name=agent.name,
+                                agent_name=agent_name,
                                 event="agent_join",
-                                message=f"{agent.name} joined the chat.",
+                                message=f"{agent_name} joined the chat.",
                             )
-                except Exception as team_exc:
-                    print(f"Failed to update team chat after adding {agent_key}: {team_exc}")
+                except Exception:
+                    logger.exception("Failed to update team chat after adding %s", agent_key)
 
                 return {
                     "success": True,
                     "action": "added",
                     "agent_key": agent_key,
-                    "message": f"Agent '{agent.name}' has been added to your organization"
+                    "message": f"Agent '{agent_name}' has been added to your organization"
                 }
             else:
                 return {
                     "success": False,
                     "action": "add_failed",
                     "agent_key": agent_key,
-                    "message": f"Agent '{agent.name}' is already in your organization"
+                    "message": f"Agent '{agent_name}' is already in your organization"
                 }
         
         else:  # action == "remove"
             # Remove agent from organization
-            agent_name = (
-                agent.name
-                if agent is not None
-                else (org_agent_record.get("name") if org_agent_record else agent_key)
-            )
             success = db.remove_agent_from_organization(org['id'], agent_key)
             if success:
                 try:
@@ -502,8 +537,8 @@ def manage_organization_agent(
                                 event="agent_leave",
                                 message=f"{agent_name} left the chat.",
                             )
-                except Exception as team_exc:
-                    print(f"Failed to update team chat after removing {agent_key}: {team_exc}")
+                except Exception:
+                    logger.exception("Failed to update team chat after removing %s", agent_key)
                 return {
                     "success": True,
                     "action": "removed",
@@ -520,8 +555,8 @@ def manage_organization_agent(
     
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Agent management error: {e}")
+    except Exception:
+        logger.exception("Agent management error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to manage organization agent"
