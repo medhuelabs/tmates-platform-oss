@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+from app.logger import configure_logging
+
 from .routes import (
     agent_catalog,
     agents,
@@ -28,6 +30,7 @@ from .routes import (
 
 
 load_dotenv()
+configure_logging()
 
 app = FastAPI(
     title=os.getenv("API_TITLE", "Tmates Public API"),

@@ -9,6 +9,7 @@ the automation suite.
 import os
 import json
 import logging
+import tempfile
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
@@ -58,8 +59,15 @@ class UserContext:
         return str(temp_dir)
     
     def get_logs_dir(self) -> str:
-        """Get user-specific logs directory path."""
-        logs_dir = PROJECT_ROOT / "logs" / "users" / self.user_id
+        """Get user-specific logs directory path outside the repo workspace."""
+
+        override = os.getenv("TMATES_USER_LOGS_DIR")
+        if override:
+            base_dir = Path(override).expanduser()
+        else:
+            base_dir = Path(tempfile.gettempdir()) / "tmates" / "logs"
+
+        logs_dir = base_dir / self.user_id
         logs_dir.mkdir(parents=True, exist_ok=True)
         return str(logs_dir)
     
