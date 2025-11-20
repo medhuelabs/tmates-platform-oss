@@ -161,6 +161,7 @@ Essential variables:
 | `FILE_STORAGE_BACKEND`                                                                  | `local`, `supabase`, or `s3`                                        |
 | `AGENT_CATALOG_ENABLED`                                                                 | Toggle Supabase catalog bundles vs. local agents                    |
 | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`                                            | Override Redis connection if needed                                 |
+| `CELERY_WORKER_FLAGS`                                                                   | Extra Celery worker CLI args (defaults to `--autoscale=8,2`)         |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                            | Enable billing and enforce plan limits                              |
 | `ENABLE_LOGFIRE`, `LOGFIRE_TOKEN`                                                       | Optional tracing exports                                            |
 
@@ -192,8 +193,11 @@ docker compose -f docker-compose.dev.yml up --build
 pip install -r requirements.txt
 export ENV=dev  # or use direnv/virtualenv
 uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
-celery -A app.worker.celery_app.celery_app worker --loglevel=info
+CELERY_WORKER_FLAGS="--autoscale=8,2" \
+  celery -A app.worker.celery_app.celery_app worker --loglevel=${CELERY_LOG_LEVEL:-info} ${CELERY_WORKER_FLAGS}
 ```
+
+`CELERY_WORKER_FLAGS` controls the concurrency parameters passed to the worker. The default `--autoscale=8,2` keeps two prefork processes hot for bursts and scales up to eight concurrent jobs when the queue fills. Override the env var (for example `CELERY_WORKER_FLAGS="--concurrency=12"`) if your deployment needs a different balance.
 
 Use `python run.py agent <key> --message "Hello"` for quick CLI-based agent checks.
 
@@ -223,10 +227,12 @@ Use `python run.py agent <key> --message "Hello"` for quick CLI-based agent chec
 - Install dev dependencies (pytest + plugins) with `pip install -r requirements.txt`.
 - Coverage lives under `app/tests/unit`, `app/tests/integration`, and the agent-specific folders at `app/agents/<agent>/tests/`.
 - Run the test suite locally with:
+
   ```bash
   pytest
   flake8
   ```
+
 - Tooling is still expanding (ruff, mypy, pre-commit), so update this section when additional linters become mandatory.
 
 ## 12. Logging, Monitoring & Tracing
@@ -278,13 +284,13 @@ source-available license inspired by the n8n Fair Code model. You are free to re
 modify the code for personal projects or within your organization, but providing it as a
 hosted/managed service or redistributing it commercially requires a commercial agreement
 with MedHue Labs LLC. See [`LICENSE.md`](./LICENSE.md) for the full terms or email
-hello@tmates.app to discuss commercial licensing.
+<hello@tmates.app> to discuss commercial licensing.
 
 ## 17. Contact & Support
 
-- Website: https://tmates.app
-- Email: hello@tmates.app
-- Discord: https://discord.gg/tmates
+- Website: <https://tmates.app>
+- Email: <hello@tmates.app>
+- Discord: <https://discord.gg/tmates>
 - Issues: GitHub Issues in this repository
 
 For enterprise inquiries or integration support, reach out via email.

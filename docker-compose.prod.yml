@@ -50,7 +50,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: celery -A app.worker.celery_app.celery_app worker --loglevel=info
+    command: >-
+      sh -c "celery -A app.worker.celery_app.celery_app worker --loglevel=${CELERY_LOG_LEVEL:-info} ${CELERY_WORKER_FLAGS:---autoscale=8,2}"
     env_file:
       - .env.prod
     environment:
