@@ -87,7 +87,7 @@ class TmatesAgentsSDK:
         candidate = session_id or user_id or (self.config.dev_session_id if self.config else None)
         if not candidate:
             raise ValueError("session identifier is required")
-        return candidate
+        return _canonical_session_key(candidate)
 
     def _get_session(self, user_id: Optional[str], session_id: Optional[str]) -> SQLAlchemySession:
         identifier = self._session_identifier(user_id, session_id)
@@ -141,3 +141,12 @@ class TmatesAgentsSDK:
 
 
 __all__ = ["TmatesAgentsSDK"]
+
+
+def _canonical_session_key(value: str) -> str:
+    """Normalize externally supplied session identifiers for storage stability."""
+
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError("session identifier is required")
+    return normalized.replace("-", "")
